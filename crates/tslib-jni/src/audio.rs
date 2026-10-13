@@ -132,7 +132,7 @@ pub extern "system" fn Java_dev_tslib_OpusCodec_nativeDecode<'local>(
     ptr: jlong,
     data: JByteArray<'local>,
     fec: jboolean,
-) -> jbyteArray {
+) -> jni::sys::jbyteArray {
     let opus_bytes = match env.convert_byte_array(&data) {
         Ok(b) => b,
         Err(e) => {
@@ -158,7 +158,7 @@ pub extern "system" fn Java_dev_tslib_OpusCodec_nativeDecode<'local>(
     };
 
     // Convert i16 samples to bytes (little-endian)
-    i16_slice_to_jbyte_array(env, &output[..len])
+    i16_slice_to_jbyte_array(&mut env, &output[..len])
 }
 
 /// `OpusCodec.decodePlc()` — synthesize one frame of comfort audio for a
@@ -168,7 +168,7 @@ pub extern "system" fn Java_dev_tslib_OpusCodec_nativeDecodePlc<'local>(
     mut env: JNIEnv<'local>,
     _class: JClass<'local>,
     ptr: jlong,
-) -> jbyteArray {
+) -> jni::sys::jbyteArray {
     let handle = ptr_to_opus(ptr);
     let frame_samples = handle.config.frame_size_samples() * handle.config.channels as usize;
     let mut output = vec![0i16; frame_samples];
@@ -178,11 +178,14 @@ pub extern "system" fn Java_dev_tslib_OpusCodec_nativeDecodePlc<'local>(
         None => return std::ptr::null_mut(),
     };
 
-    i16_slice_to_jbyte_array(env, &output[..len])
+    i16_slice_to_jbyte_array(&mut env, &output[..len])
 }
 
 /// Convert an i16 sample slice to a little-endian jbyteArray.
-fn i16_slice_to_jbyte_array<'local>(env: &mut JNIEnv<'local>, samples: &[i16]) -> jbyteArray {
+fn i16_slice_to_jbyte_array<'local>(
+    env: &mut JNIEnv<'local>,
+    samples: &[i16],
+) -> jni::sys::jbyteArray {
     let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
     env.byte_array_from_slice(&bytes)
         .map(|a| a.into_raw())
