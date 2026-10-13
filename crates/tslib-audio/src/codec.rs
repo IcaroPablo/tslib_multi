@@ -197,6 +197,20 @@ impl OpusDecoder {
             frame_size: config.frame_size_samples(),
         })
     }
+
+    /// Decode a packet with FEC decoding enabled. When the preceding packet
+    /// was lost, this returns the loss-repair audio reconstructed from the
+    /// FEC data embedded in THIS packet (instead of this packet's own audio)
+    /// — that is how a single missing frame is recovered from its successor.
+    pub fn decode_with_fec(&mut self, data: &[u8], output: &mut [i16]) -> Result<usize> {
+        let samples = self
+            .inner
+            .decode(data, output, true)
+            .map_err(|e| AudioError::Decode(format!("Opus FEC decode error: {}", e)))?;
+
+        // samples is per channel, return total samples written
+        Ok(samples * self.channels as usize)
+    }
 }
 
 impl Decoder for OpusDecoder {
