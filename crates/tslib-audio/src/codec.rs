@@ -98,6 +98,14 @@ impl OpusEncoder {
             .set_packet_loss_perc(5)
             .map_err(|e| AudioError::Codec(format!("Failed to set packet loss: {}", e)))?;
 
+        // Encoder effort 0-10 (libopus default 5 is sized for the weakest
+        // conceivable device). 8 buys a visible quality tier at the same
+        // bitrate — including better FEC redundancy frames — for a few
+        // extra MHz on frames that only get encoded while transmitting.
+        encoder
+            .set_complexity(8)
+            .map_err(|e| AudioError::Codec(format!("Failed to set complexity: {}", e)))?;
+
         Ok(Self {
             inner: encoder,
             channels: config.channels,
