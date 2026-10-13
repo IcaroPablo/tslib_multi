@@ -112,9 +112,10 @@ pub struct Client {
     whisper_clients: Vec<u16>,
     whisper_channels: Vec<u64>,
     /// Low-latency audio sink: when set, every received voice frame is
-    /// delivered synchronously on the pump thread instead of being emitted
+    /// delivered synchronously on the pump thread (sender id, sender packet
+    /// sequence, payload, whisper flag) instead of being emitted
     /// as an `AudioReceived` event (which waits for the next event pull).
-    audio_sink: Option<Arc<dyn Fn(u16, &[u8], bool) + Send + Sync>>,
+    audio_sink: Option<Arc<dyn Fn(u16, u16, &[u8], bool) + Send + Sync>>,
 }
 
 impl Client {
@@ -322,10 +323,13 @@ impl Client {
     }
 
     /// Register the low-latency audio sink. Pass `None` to restore the
-    /// default `AudioReceived` event delivery.
+    /// default `AudioReceived` event delivery. The closure receives
+    /// `(sender_id, sender_packet_seq, data, is_whisper)`; the sequence is
+    /// the sender's per-packet counter from the TS voice header, which
+    /// receivers use to detect lost frames.
     pub fn set_audio_sink(
         &mut self,
-        sink: Option<Arc<dyn Fn(u16, &[u8], bool) + Send + Sync>>,
+        sink: Option<Arc<dyn Fn(u16, u16, &[u8], bool) + Send + Sync>>,
     ) {
         self.audio_sink = sink;
     }
@@ -508,9 +512,9 @@ impl Client {
             StreamItem::Audio(audio) => {
                 // Audio received - extract data from InAudioBuf
                 let audio_data = audio.data().data();
-                let (from_id, codec, data, is_whisper) = match audio_data {
-                    AudioData::S2C { from, codec, data, .. } => (*from, *codec, data, false),
-                    AudioData::S2CWhisper { from, codec, data, .. } => (*from, *codec, data, true),
+                let (from_id, seq, codec, data, is_whisper) = match audio_data {
+                    AudioData::S2C { id, from, codec, data } => (*from, *id, *codec, data, false),
+                    AudioData::S2CWhisper { id, from, codec, data } => (*from, *id, *codec, data, true),
                     _ => return Vec::new(), // C2S packets should not be received
                 };
 
@@ -531,7 +535,7 @@ impl Client {
                 // Hot path: deliver to the registered sink synchronously (no
                 // event round-trip); fall back to the event stream otherwise
                 if let Some(sink) = self.audio_sink.as_ref() {
-                    sink(from_id, data, is_whisper);
+                    sink(from_id, seq, data, is_whisper);
                 } else {
                     let event = Event::AudioReceived {
                         user_id: from_id,

@@ -172,7 +172,7 @@ pub extern "system" fn Java_dev_tslib_Client_nativeSetAudioSink(
     }
 
     handle.client.set_audio_sink(Some(std::sync::Arc::new(
-        move |user_id: u16, data: &[u8], is_whisper: bool| {
+        move |user_id: u16, seq: u16, data: &[u8], is_whisper: bool| {
             let Some(vm) = JAVA_VM.get() else { return };
             let Ok(mut env) = vm.attach_current_thread_permanently() else {
                 return;
@@ -182,9 +182,10 @@ pub extern "system" fn Java_dev_tslib_Client_nativeSetAudioSink(
                     let _ = env.call_method(
                         &global,
                         "onAudioFrame",
-                        "(I[BZ)V",
+                        "(II[BZ)V",
                         &[
                             JValue::Int(user_id as i32),
+                            JValue::Int(seq as i32),
                             JValue::Object(&arr),
                             JValue::Bool(is_whisper as u8),
                         ],
