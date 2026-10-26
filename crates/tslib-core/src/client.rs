@@ -101,6 +101,10 @@ pub struct Client {
     /// tsclientlib's state book doesn't reflect our clientupdate commands
     /// (the server doesn't echo them back), so we track it separately.
     self_input_muted: Option<bool>,
+    /// Local override for our own nickname, for the same reason: a
+    /// `clientupdate client_nickname` is not echoed back to the sender, so the
+    /// book keeps the old name and the member list would show it.
+    self_nickname: Option<String>,
     /// Pending file list request: accumulates entries until FileListFinished
     pending_file_list: Option<(u64, String, Vec<FileEntry>)>,
     /// Pending permoverview request: accumulates permission entries
@@ -111,6 +115,10 @@ pub struct Client {
     /// semantics: whispering and channel talk are mutually exclusive).
     whisper_clients: Vec<u16>,
     whisper_channels: Vec<u64>,
+    /// Server groups that should hear the whisper. A group is one target: the
+    /// packet names the group and the server resolves its members, so clients
+    /// that join the group later are covered without re-sending the target set.
+    whisper_groups: Vec<u64>,
     /// Low-latency audio sink: when set, every received voice frame is
     /// delivered synchronously on the pump thread (sender id, sender packet
     /// sequence, payload, whisper flag) instead of being emitted
@@ -140,10 +148,12 @@ impl Client {
             pending_downloads: HashMap::new(),
             pending_uploads: HashMap::new(),
             self_input_muted: None,
+            self_nickname: None,
             pending_file_list: None,
             pending_perm_overview: None,
             whisper_clients: Vec::new(),
             whisper_channels: Vec::new(),
+            whisper_groups: Vec::new(),
             audio_sink: None,
         };
 
@@ -414,6 +424,19 @@ impl Client {
 
         // Synchronize full state from server
         self.sync_state()?;
+
+        // Ask for the server group list so whisper-to-group targets can be
+        // named in the UI. Not critical - a failure only means groups stay
+        // unnamed.
+        if let Err(e) = self.request_server_group_list() {
+            warn!("Failed to request server group list: {}", e);
+        }
+
+        // Same for the channel group list: the member panel names the channel
+        // group a client holds, and the client list only carries its id.
+        if let Err(e) = self.request_channel_group_list() {
+            warn!("Failed to request channel group list: {}", e);
+        }
 
         // Ask the server to push current variable values (client/channel
         // counts, uptime) via notifyserverupdated. Not critical — a failure
@@ -1095,6 +1118,13 @@ impl Client {
                 user.is_input_muted = muted;
             }
         }
+        // Same for the nickname: a clientupdate is never echoed back to the
+        // sender, so the book still holds the name we connected with.
+        if let (Some(client_id), Some(nickname)) = (self.client_id, self.self_nickname.as_ref()) {
+            if let Some(user) = users.iter_mut().find(|u| u.id == client_id) {
+                user.nickname = nickname.clone();
+            }
+        }
         users
     }
 
@@ -1124,6 +1154,13 @@ impl Client {
         if let (Some(client_id), Some(muted)) = (self.client_id, self.self_input_muted) {
             if let Some(user) = users.iter_mut().find(|u| u.id == client_id) {
                 user.is_input_muted = muted;
+            }
+        }
+        // Same for the nickname: a clientupdate is never echoed back to the
+        // sender, so the book still holds the name we connected with.
+        if let (Some(client_id), Some(nickname)) = (self.client_id, self.self_nickname.as_ref()) {
+            if let Some(user) = users.iter_mut().find(|u| u.id == client_id) {
+                user.nickname = nickname.clone();
             }
         }
         users
@@ -1300,6 +1337,22 @@ impl Client {
 
     /// Send audio data
     pub fn send_audio(&mut self, data: &[u8], codec: AudioCodec) -> Result<()> {
+        // Server groups are routed by the server (one group-whisper packet
+        // each), so they never expand into a client list and never age: whoever
+        // holds the group when a packet arrives hears it, late joiners included.
+        // Explicit clients are resolved here instead, because a client id is
+        // only meaningful for the session that handed it out.
+        let whisper_clients = self.resolve_whisper_clients();
+        let whisper_active = !self.whisper_clients.is_empty()
+            || !self.whisper_channels.is_empty()
+            || !self.whisper_groups.is_empty();
+        let routes = plan_audio_routes(
+            whisper_active,
+            &whisper_clients,
+            &self.whisper_channels,
+            &self.whisper_groups,
+        );
+
         let con = self
             .connection
             .as_mut()
@@ -1309,47 +1362,162 @@ impl Client {
             return Err(Error::Internal("Cannot send audio".to_string()));
         }
 
-        // Whisper mode: route to the explicit target set instead of the channel
-        let audio_data = if !self.whisper_clients.is_empty() || !self.whisper_channels.is_empty() {
-            AudioData::C2SWhisper {
-                id: self.audio_sequence,
-                codec: audio_codec_to_codec_type(codec),
-                channels: self.whisper_channels.clone(),
-                clients: self.whisper_clients.clone(),
-                data,
-            }
-        } else {
-            AudioData::C2S {
-                id: self.audio_sequence,
-                codec: audio_codec_to_codec_type(codec),
-                data,
-            }
-        };
+        let sequence = self.audio_sequence;
         self.audio_sequence = self.audio_sequence.wrapping_add(1);
+        let codec_type = audio_codec_to_codec_type(codec);
 
-        let packet = OutAudio::new(&audio_data);
-        con.send_audio(packet)
-            .map_err(|e| Error::Internal(e.to_string()))?;
+        for route in routes {
+            let audio_data = match route {
+                AudioRoute::Channel => AudioData::C2S {
+                    id: sequence,
+                    codec: codec_type,
+                    data,
+                },
+                AudioRoute::TargetList { clients, channels } => AudioData::C2SWhisper {
+                    id: sequence,
+                    codec: codec_type,
+                    channels,
+                    clients,
+                    data,
+                },
+                AudioRoute::ServerGroup(group_id) => AudioData::C2SWhisperNew {
+                    id: sequence,
+                    codec: codec_type,
+                    whisper_type: GROUP_WHISPER_TYPE_SERVER_GROUP,
+                    target: GROUP_WHISPER_TARGET_ALL_CHANNELS,
+                    target_id: group_id,
+                    data,
+                },
+            };
+            let packet = OutAudio::new(&audio_data);
+            con.send_audio(packet)
+                .map_err(|e| Error::Internal(e.to_string()))?;
+        }
 
         Ok(())
     }
 
     /// Set the whisper target set. Voice captured afterwards is sent as
-    /// `C2SWhisper` packets to these clients/channels instead of the current
-    /// channel; passing two empty lists switches back to channel talk.
-    /// Targets are per-packet client/channel ids — resolve them from the
-    /// current user list at call time, they don't follow reconnects.
-    pub fn set_whisper_targets(&mut self, clients: Vec<u16>, channels: Vec<u64>) -> Result<()> {
+    /// whisper packets to these clients/channels/server groups instead of the
+    /// current channel; passing three empty lists switches back to channel talk.
+    ///
+    /// Client and channel targets are per-packet ids - resolve them from the
+    /// current user list at call time, they don't follow reconnects. Server
+    /// groups are different: the group id is kept and sent as a group-whisper
+    /// packet, so the target survives peer reconnects and membership changes.
+    pub fn set_whisper_targets(
+        &mut self,
+        clients: Vec<u16>,
+        channels: Vec<u64>,
+        groups: Vec<u64>,
+    ) -> Result<()> {
         self.whisper_clients = clients;
         self.whisper_channels = channels;
-        if self.whisper_clients.is_empty() && self.whisper_channels.is_empty() {
+        self.whisper_groups = groups;
+        if self.whisper_clients.is_empty()
+            && self.whisper_channels.is_empty()
+            && self.whisper_groups.is_empty()
+        {
             debug!("Whisper mode off, back to channel talk");
         } else {
             debug!(
-                "Whisper mode on: clients={:?}, channels={:?}",
-                self.whisper_clients, self.whisper_channels
+                "Whisper mode on: clients={:?}, channels={:?}, groups={:?}",
+                self.whisper_clients, self.whisper_channels, self.whisper_groups
             );
         }
+        Ok(())
+    }
+
+    /// Client ids that must receive the current whisper, sorted and deduplicated.
+    ///
+    /// Explicit client targets are kept as configured: the server drops packets
+    /// for a client id that has vanished, which is the honest outcome. Server
+    /// groups are deliberately *not* expanded here - they travel as
+    /// group-whisper packets and are resolved by the server.
+    fn resolve_whisper_clients(&self) -> Vec<u16> {
+        let mut clients = self.whisper_clients.clone();
+        clients.sort_unstable();
+        clients.dedup();
+        clients
+    }
+
+    /// Server groups the local book knows, as `(id, name)` sorted by id.
+    ///
+    /// The list is requested on connect (`servergrouplist`); until the server
+    /// answers it is empty. Names are what the whisper list shows - the client
+    /// list only carries group ids.
+    pub fn list_server_groups(&self) -> Vec<(u64, String)> {
+        let Some(con) = self.connection.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(state) = con.get_state() else {
+            return Vec::new();
+        };
+        let mut groups: Vec<(u64, String)> = state
+            .server_groups
+            .iter()
+            .map(|(id, group)| (id.0, group.name.clone()))
+            .collect();
+        groups.sort_by_key(|(id, _)| *id);
+        groups
+    }
+
+    /// Ask the server for its group list (`notifyservergrouplist`).
+    pub fn request_server_group_list(&mut self) -> Result<()> {
+        let con = self
+            .connection
+            .as_mut()
+            .ok_or(ConnectionError::NotConnected)?;
+
+        let cmd = OutCommand::new(
+            Direction::C2S,
+            Flags::empty(),
+            PacketType::Command,
+            "servergrouplist",
+        );
+        cmd.send(con).map_err(|e| Error::Internal(e.to_string()))?;
+
+        debug!("Requested server group list");
+        Ok(())
+    }
+
+    /// Channel groups the local book knows, as `(id, name)` sorted by id.
+    ///
+    /// Requested on connect (`channelgrouplist`), like the server group list:
+    /// a member's `channel_group` is only an id, and the panel that shows it
+    /// needs the name the server gave the group.
+    pub fn list_channel_groups(&self) -> Vec<(u64, String)> {
+        let Some(con) = self.connection.as_ref() else {
+            return Vec::new();
+        };
+        let Ok(state) = con.get_state() else {
+            return Vec::new();
+        };
+        let mut groups: Vec<(u64, String)> = state
+            .channel_groups
+            .iter()
+            .map(|(id, group)| (id.0, group.name.clone()))
+            .collect();
+        groups.sort_by_key(|(id, _)| *id);
+        groups
+    }
+
+    /// Ask the server for its channel group list (`notifychannelgrouplist`).
+    pub fn request_channel_group_list(&mut self) -> Result<()> {
+        let con = self
+            .connection
+            .as_mut()
+            .ok_or(ConnectionError::NotConnected)?;
+
+        let cmd = OutCommand::new(
+            Direction::C2S,
+            Flags::empty(),
+            PacketType::Command,
+            "channelgrouplist",
+        );
+        cmd.send(con).map_err(|e| Error::Internal(e.to_string()))?;
+
+        debug!("Requested channel group list");
         Ok(())
     }
 
@@ -1530,6 +1698,41 @@ impl Client {
 
         Ok(())
     }
+
+    /// Change our nickname for this session (`clientupdate client_nickname`).
+    ///
+    /// Temporary on purpose: the nickname lives server-side only until the
+    /// connection ends, so the identity file and the next connect are untouched.
+    /// The local book does not get the change echoed back, so it is patched here
+    /// and remembered as an override for [`Client::users`].
+    pub fn set_nickname(&mut self, nickname: &str) -> Result<()> {
+        let con = self
+            .connection
+            .as_mut()
+            .ok_or(ConnectionError::NotConnected)?;
+
+        let mut cmd = OutCommand::new(
+            Direction::C2S,
+            Flags::empty(),
+            PacketType::Command,
+            "clientupdate",
+        );
+        cmd.write_arg("client_nickname", &nickname);
+
+        cmd.send(con)
+            .map_err(|e| Error::Internal(e.to_string()))?;
+
+        info!("Sent clientupdate client_nickname={}", nickname);
+
+        self.self_nickname = Some(nickname.to_string());
+        if let Some(client_id) = self.client_id {
+            if let Some(user) = self.server_state.users.get_mut(&client_id) {
+                user.nickname = nickname.to_string();
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// Convert tsclientlib CodecType to our AudioCodec
@@ -1554,6 +1757,65 @@ fn audio_codec_to_codec_type(codec: AudioCodec) -> CodecType {
         AudioCodec::OpusVoice => CodecType::OpusVoice,
         AudioCodec::OpusMusic => CodecType::OpusMusic,
     }
+}
+
+/// `GroupWhisperType::ServerGroup`: the target id names a server group whose
+/// members should hear the packet (ts3protocol.md section 1.8.2.1).
+const GROUP_WHISPER_TYPE_SERVER_GROUP: u8 = 0;
+
+/// `GroupWhisperTarget::AllChannels`: the group is targeted wherever its members
+/// are, with no channel restriction.
+const GROUP_WHISPER_TARGET_ALL_CHANNELS: u8 = 0;
+
+/// How one captured audio frame reaches its listeners.
+///
+/// A whisper set can mix explicit targets with server groups, and the two use
+/// different packets: the legacy list carries clients/channels, while a group
+/// needs a `VoiceWhisper` packet with the `Newprotocol` flag, which can only
+/// name one group. One frame can therefore produce several packets.
+#[derive(Debug, PartialEq, Eq)]
+enum AudioRoute {
+    /// Normal channel talk.
+    Channel,
+    /// Whisper to an explicit client/channel list (`C2SWhisper`, legacy format).
+    TargetList { clients: Vec<u16>, channels: Vec<u64> },
+    /// Whisper to every member of a server group (`C2SWhisperNew`).
+    ServerGroup(u64),
+}
+
+/// The packets one audio frame has to be sent as.
+///
+/// [`AudioRoute::Channel`] is returned only when whispering is off, so a
+/// configured whisper can never leak into the channel. When whispering is on but
+/// nothing is reachable - every explicitly listed client went offline and no
+/// group or channel target is left - the frame is aimed at the virtual client 0,
+/// which the server drops.
+fn plan_audio_routes(
+    whisper_active: bool,
+    clients: &[u16],
+    channels: &[u64],
+    groups: &[u64],
+) -> Vec<AudioRoute> {
+    if !whisper_active {
+        return vec![AudioRoute::Channel];
+    }
+
+    let mut routes = Vec::new();
+    if !clients.is_empty() || !channels.is_empty() {
+        routes.push(AudioRoute::TargetList {
+            clients: clients.to_vec(),
+            channels: channels.to_vec(),
+        });
+    }
+    routes.extend(groups.iter().copied().map(AudioRoute::ServerGroup));
+
+    if routes.is_empty() {
+        routes.push(AudioRoute::TargetList {
+            clients: vec![0],
+            channels: Vec::new(),
+        });
+    }
+    routes
 }
 
 /// Convert tsclientlib Client to our User type
@@ -1726,4 +1988,96 @@ fn compute_file_permission_hints(perms: &HashMap<u32, i32>) -> u64 {
 
     log::info!("compute_file_permission_hints: perms={:?} -> hints={:#x}", perms, hints);
     hints
+}
+
+#[cfg(test)]
+mod whisper_routing_tests {
+    use super::{
+        plan_audio_routes, AudioRoute, GROUP_WHISPER_TARGET_ALL_CHANNELS,
+        GROUP_WHISPER_TYPE_SERVER_GROUP,
+    };
+    use tsproto_packets::packets::{AudioData, Flags, OutAudio, PacketType};
+
+    #[test]
+    fn channel_talk_is_a_single_channel_frame() {
+        assert_eq!(plan_audio_routes(false, &[], &[], &[]), vec![AudioRoute::Channel]);
+        // A stale client list must not whisper once whispering is off.
+        assert_eq!(
+            plan_audio_routes(false, &[3], &[7], &[6]),
+            vec![AudioRoute::Channel]
+        );
+    }
+
+    #[test]
+    fn explicit_targets_share_one_list_packet() {
+        assert_eq!(
+            plan_audio_routes(true, &[3, 7], &[42], &[]),
+            vec![AudioRoute::TargetList {
+                clients: vec![3, 7],
+                channels: vec![42],
+            }]
+        );
+    }
+
+    #[test]
+    fn each_server_group_gets_its_own_packet() {
+        assert_eq!(
+            plan_audio_routes(true, &[], &[], &[6, 8]),
+            vec![AudioRoute::ServerGroup(6), AudioRoute::ServerGroup(8)]
+        );
+    }
+
+    #[test]
+    fn groups_and_explicit_targets_are_sent_side_by_side() {
+        assert_eq!(
+            plan_audio_routes(true, &[3], &[], &[6]),
+            vec![
+                AudioRoute::TargetList { clients: vec![3], channels: vec![] },
+                AudioRoute::ServerGroup(6),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_whisper_with_every_target_offline_is_dropped_not_broadcast() {
+        // Client 0 is the server's virtual client: the packet goes nowhere, which
+        // is the point - an empty target list would mean "no whisper routing" and
+        // broadcast the microphone to the whole channel.
+        assert_eq!(
+            plan_audio_routes(true, &[], &[], &[]),
+            vec![AudioRoute::TargetList {
+                clients: vec![0],
+                channels: vec![],
+            }]
+        );
+    }
+
+    /// Pins the group-whisper packet to the layout in ts3protocol.md 1.8.2.1:
+    /// `VId u16 | C u8 | TY u8 | TA u8 | U u64`, with the Newprotocol flag set.
+    #[test]
+    fn group_whisper_packet_matches_the_documented_layout() {
+        let data = AudioData::C2SWhisperNew {
+            id: 0x1234,
+            codec: tsproto_packets::packets::CodecType::OpusVoice,
+            whisper_type: GROUP_WHISPER_TYPE_SERVER_GROUP,
+            target: GROUP_WHISPER_TARGET_ALL_CHANNELS,
+            target_id: 6,
+            data: &[9, 9],
+        };
+        let packet = OutAudio::new(&data);
+
+        assert_eq!(packet.header().packet_type(), PacketType::VoiceWhisper);
+        assert!(
+            packet.header().flags().contains(Flags::NEWPROTOCOL),
+            "group whisper is only understood with the Newprotocol flag"
+        );
+
+        let content = packet.content();
+        assert_eq!(&content[..2], &0x1234u16.to_be_bytes(), "voice packet id");
+        assert_eq!(content[2], 4, "codec id 4 = Opus Voice on the wire");
+        assert_eq!(content[3], GROUP_WHISPER_TYPE_SERVER_GROUP, "TY");
+        assert_eq!(content[4], GROUP_WHISPER_TARGET_ALL_CHANNELS, "TA");
+        assert_eq!(&content[5..13], &6u64.to_be_bytes(), "U = server group id");
+        assert_eq!(&content[13..], &[9, 9], "audio payload is passed through");
+    }
 }

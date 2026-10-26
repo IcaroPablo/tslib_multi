@@ -858,8 +858,28 @@ pub extern "system" fn Java_dev_tslib_Client_nativeSendAudio(
     to_jni_result(&mut env, handle.client.send_audio(&bytes, audio_codec));
 }
 
-/// `Client.setWhisperTargets(clients, channels)` — both arrays may be empty
-/// (whisper off). Null arrays are treated as empty.
+/// Read a `long[]` into a `Vec<u64>`; a null array is an empty list.
+fn read_long_array(env: &mut JNIEnv, array: &JLongArray, what: &str) -> Option<Vec<u64>> {
+    if array.is_null() {
+        return Some(Vec::new());
+    }
+    let len = match env.get_array_length(array) {
+        Ok(n) => n as usize,
+        Err(e) => {
+            throw_tslib_exception(env, &format!("Failed to read whisper {what}: {e}"));
+            return None;
+        }
+    };
+    let mut buf = vec![0 as jlong; len];
+    if let Err(e) = env.get_long_array_region(array, 0, &mut buf) {
+        throw_tslib_exception(env, &format!("Failed to read whisper {what}: {e}"));
+        return None;
+    }
+    Some(buf.into_iter().map(|v| v as u64).collect())
+}
+
+/// `Client.setWhisperTargets(clients, channels, groups)` — all arrays may be
+/// empty (whisper off). Null arrays are treated as empty.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_tslib_Client_nativeSetWhisperTargets(
     mut env: JNIEnv,
@@ -867,6 +887,7 @@ pub extern "system" fn Java_dev_tslib_Client_nativeSetWhisperTargets(
     ptr: jlong,
     clients: JIntArray,
     channels: JLongArray,
+    groups: JLongArray,
 ) {
     let handle = ptr_to_handle(ptr);
 
@@ -888,28 +909,101 @@ pub extern "system" fn Java_dev_tslib_Client_nativeSetWhisperTargets(
         buf.into_iter().map(|v| v as u16).collect()
     };
 
-    let channel_ids: Vec<u64> = if channels.is_null() {
-        Vec::new()
-    } else {
-        let len = match env.get_array_length(&channels) {
-            Ok(n) => n as usize,
-            Err(e) => {
-                throw_tslib_exception(&mut env, &format!("Failed to read whisper channels: {e}"));
-                return;
-            }
-        };
-        let mut buf = vec![0 as jlong; len];
-        if let Err(e) = env.get_long_array_region(&channels, 0, &mut buf) {
-            throw_tslib_exception(&mut env, &format!("Failed to read whisper channels: {e}"));
-            return;
-        }
-        buf.into_iter().map(|v| v as u64).collect()
+    let Some(channel_ids) = read_long_array(&mut env, &channels, "channels") else {
+        return;
+    };
+    let Some(group_ids) = read_long_array(&mut env, &groups, "groups") else {
+        return;
     };
 
     to_jni_result(
         &mut env,
         handle
             .client
-            .set_whisper_targets(client_ids, channel_ids),
+            .set_whisper_targets(client_ids, channel_ids, group_ids),
     );
+}
+
+/// `Client.getServerGroups()` — `dev.tslib.ServerGroup[]`, sorted by id.
+///
+/// Empty until the server answers the `servergrouplist` request issued on
+/// connect.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_tslib_Client_nativeGetServerGroups(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+) -> jobjectArray {
+    let handle = ptr_to_handle(ptr);
+    let groups = handle.client.list_server_groups();
+
+    let group_class = match env.find_class("dev/tslib/ServerGroup") {
+        Ok(c) => c,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let array = match env.new_object_array(groups.len() as i32, &group_class, &JObject::null()) {
+        Ok(a) => a,
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    for (index, (id, name)) in groups.iter().enumerate() {
+        let object = crate::types::create_java_server_group(&mut env, *id, name);
+        if env.set_object_array_element(&array, index as i32, &object).is_err() {
+            return std::ptr::null_mut();
+        }
+    }
+
+    array.into_raw()
+}
+
+/// `Client.getChannelGroups()` — `dev.tslib.ChannelGroup[]`, sorted by id.
+///
+/// Empty until the server answers the `channelgrouplist` request issued on
+/// connect.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_tslib_Client_nativeGetChannelGroups(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+) -> jobjectArray {
+    let handle = ptr_to_handle(ptr);
+    let groups = handle.client.list_channel_groups();
+
+    let group_class = match env.find_class("dev/tslib/ChannelGroup") {
+        Ok(c) => c,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let array = match env.new_object_array(groups.len() as i32, &group_class, &JObject::null()) {
+        Ok(a) => a,
+        Err(_) => return std::ptr::null_mut(),
+    };
+
+    for (index, (id, name)) in groups.iter().enumerate() {
+        let object = crate::types::create_java_channel_group(&mut env, *id, name);
+        if env.set_object_array_element(&array, index as i32, &object).is_err() {
+            return std::ptr::null_mut();
+        }
+    }
+
+    array.into_raw()
+}
+
+/// `Client.setNickname(nickname)` - temporary nickname for this session.
+///
+/// Sent as `clientupdate client_nickname`, which the server keeps for the
+/// lifetime of the connection only; the identity file is left alone.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_tslib_Client_nativeSetNickname(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+    nickname: JString,
+) {
+    let nickname = match require_string(&mut env, &nickname) {
+        Ok(s) => s,
+        Err(()) => return,
+    };
+    log::info!("nativeSetNickname: {}", nickname);
+    let handle = ptr_to_handle(ptr);
+    to_jni_result(&mut env, handle.client.set_nickname(&nickname));
 }

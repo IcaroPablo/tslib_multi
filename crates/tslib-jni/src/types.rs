@@ -134,6 +134,36 @@ pub fn create_java_server_info<'a>(env: &mut JNIEnv<'a>, info: &ServerInfo) -> J
     .unwrap_or_else(|_| JObject::null())
 }
 
+/// Create a Java `dev.tslib.ServerGroup` object from a Rust `(id, name)` pair.
+pub fn create_java_server_group<'a>(env: &mut JNIEnv<'a>, id: u64, name: &str) -> JObject<'a> {
+    let name = env.new_string(name).unwrap();
+
+    env.new_object(
+        "dev/tslib/ServerGroup",
+        "(JLjava/lang/String;)V",
+        &[
+            JValue::Long(id as i64),
+            JValue::Object(&JObject::from(name)),
+        ],
+    )
+    .unwrap_or_else(|_| JObject::null())
+}
+
+/// Create a Java `dev.tslib.ChannelGroup` object from a Rust `(id, name)` pair.
+pub fn create_java_channel_group<'a>(env: &mut JNIEnv<'a>, id: u64, name: &str) -> JObject<'a> {
+    let name = env.new_string(name).unwrap();
+
+    env.new_object(
+        "dev/tslib/ChannelGroup",
+        "(JLjava/lang/String;)V",
+        &[
+            JValue::Long(id as i64),
+            JValue::Object(&JObject::from(name)),
+        ],
+    )
+    .unwrap_or_else(|_| JObject::null())
+}
+
 /// Create a Java `dev.tslib.Event` from a Rust `Event`.
 pub fn create_java_event<'a>(
     env: &mut JNIEnv<'a>,
