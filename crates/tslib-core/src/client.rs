@@ -101,6 +101,8 @@ pub struct Client {
     /// tsclientlib's state book doesn't reflect our clientupdate commands
     /// (the server doesn't echo them back), so we track it separately.
     self_input_muted: Option<bool>,
+    /// Same override for our own output (speaker) muted state.
+    self_output_muted: Option<bool>,
     /// Local override for our own nickname, for the same reason: a
     /// `clientupdate client_nickname` is not echoed back to the sender, so the
     /// book keeps the old name and the member list would show it.
@@ -152,6 +154,7 @@ impl Client {
             pending_downloads: HashMap::new(),
             pending_uploads: HashMap::new(),
             self_input_muted: None,
+            self_output_muted: None,
             self_nickname: None,
             self_away: None,
             pending_file_list: None,
@@ -1148,6 +1151,11 @@ impl Client {
                 user.is_input_muted = muted;
             }
         }
+        if let (Some(client_id), Some(muted)) = (self.client_id, self.self_output_muted) {
+            if let Some(user) = users.iter_mut().find(|u| u.id == client_id) {
+                user.is_output_muted = muted;
+            }
+        }
         // Same for the nickname: a clientupdate is never echoed back to the
         // sender, so the book still holds the name we connected with.
         if let (Some(client_id), Some(nickname)) = (self.client_id, self.self_nickname.as_ref()) {
@@ -1194,6 +1202,11 @@ impl Client {
         if let (Some(client_id), Some(muted)) = (self.client_id, self.self_input_muted) {
             if let Some(user) = users.iter_mut().find(|u| u.id == client_id) {
                 user.is_input_muted = muted;
+            }
+        }
+        if let (Some(client_id), Some(muted)) = (self.client_id, self.self_output_muted) {
+            if let Some(user) = users.iter_mut().find(|u| u.id == client_id) {
+                user.is_output_muted = muted;
             }
         }
         // Same for the nickname: a clientupdate is never echoed back to the
@@ -1743,6 +1756,39 @@ impl Client {
         if let Some(client_id) = self.client_id {
             if let Some(user) = self.server_state.users.get_mut(&client_id) {
                 user.is_input_muted = muted;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Notify the server of our output (speaker) muted state, so the others
+    /// see that we cannot hear them.
+    pub fn set_output_muted(&mut self, muted: bool) -> Result<()> {
+        let con = self
+            .connection
+            .as_mut()
+            .ok_or(ConnectionError::NotConnected)?;
+
+        let val: u32 = if muted { 1 } else { 0 };
+        let mut cmd = OutCommand::new(
+            Direction::C2S,
+            Flags::empty(),
+            PacketType::Command,
+            "clientupdate",
+        );
+        cmd.write_arg("client_output_muted", &val);
+
+        cmd.send(con)
+            .map_err(|e| Error::Internal(e.to_string()))?;
+
+        info!("Sent clientupdate client_output_muted={}", val);
+
+        // Not echoed back to the sender either; see set_input_muted.
+        self.self_output_muted = Some(muted);
+        if let Some(client_id) = self.client_id {
+            if let Some(user) = self.server_state.users.get_mut(&client_id) {
+                user.is_output_muted = muted;
             }
         }
 

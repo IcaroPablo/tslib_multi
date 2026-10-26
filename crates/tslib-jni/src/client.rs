@@ -741,6 +741,24 @@ pub extern "system" fn Java_dev_tslib_Client_nativeSetInputMuted(
     to_jni_result(&mut env, result);
 }
 
+/// `Client.setOutputMuted(muted)` — notify the server of our output muted state.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_tslib_Client_nativeSetOutputMuted(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+    muted: jboolean,
+) {
+    let muted_bool = muted != 0;
+    log::info!("nativeSetOutputMuted: muted={}", muted_bool);
+    let handle = ptr_to_handle(ptr);
+    let result = handle.client.set_output_muted(muted_bool);
+    if let Err(e) = &result {
+        log::error!("nativeSetOutputMuted: FAILED — {}", e);
+    }
+    to_jni_result(&mut env, result);
+}
+
 /// `Client.listFiles(channelId, path)` — request file list for a channel directory.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_tslib_Client_nativeListFiles(
