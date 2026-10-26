@@ -1007,3 +1007,29 @@ pub extern "system" fn Java_dev_tslib_Client_nativeSetNickname(
     let handle = ptr_to_handle(ptr);
     to_jni_result(&mut env, handle.client.set_nickname(&nickname));
 }
+
+/// `Client.setAway(away, message)` - the desktop client's status menu.
+///
+/// `away = false` clears both the flag and the away message; a `null` or blank
+/// message means "away without a reason".
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_tslib_Client_nativeSetAway(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+    away: jboolean,
+    message: JString,
+) {
+    let message = if message.is_null() {
+        None
+    } else {
+        match require_string(&mut env, &message) {
+            Ok(s) => Some(s),
+            Err(()) => return,
+        }
+    };
+    let away = away != 0;
+    log::info!("nativeSetAway: away={} message={:?}", away, message);
+    let handle = ptr_to_handle(ptr);
+    to_jni_result(&mut env, handle.client.set_away(away, message.as_deref()));
+}

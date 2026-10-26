@@ -105,6 +105,10 @@ pub struct Client {
     /// `clientupdate client_nickname` is not echoed back to the sender, so the
     /// book keeps the old name and the member list would show it.
     self_nickname: Option<String>,
+    /// Local override for our own away state (away flag, away message).
+    /// The member list has to follow the user's choice even before the server
+    /// answers, and TS3 does not echo our own `clientupdate` back to us.
+    self_away: Option<(bool, Option<String>)>,
     /// Pending file list request: accumulates entries until FileListFinished
     pending_file_list: Option<(u64, String, Vec<FileEntry>)>,
     /// Pending permoverview request: accumulates permission entries
@@ -149,6 +153,7 @@ impl Client {
             pending_uploads: HashMap::new(),
             self_input_muted: None,
             self_nickname: None,
+            self_away: None,
             pending_file_list: None,
             pending_perm_overview: None,
             whisper_clients: Vec::new(),
@@ -984,6 +989,31 @@ impl Client {
                 }
                 None
             }
+            InMessage::ClientUpdated(ref updated) => {
+                // Log how the server sees our own away flag. TS3 servers do not
+                // echo our own `clientupdate` back to us (measured: no such
+                // message arrives after `client_away`), so this is diagnostic
+                // only - the client never fights the server by re-sending here.
+                // Re-sending on every mismatch would spend command budget and can
+                // trip the server's flood protection (ClientIsFlooding), which
+                // rejects *all* following commands for a while.
+                if let (Some(self_id), Some((want_away, _))) =
+                    (self.client_id, self.self_away.clone())
+                {
+                    for part in updated.iter() {
+                        if part.client_id.0 != self_id {
+                            continue;
+                        }
+                        if let Some(is_away) = part.is_away {
+                            log::info!(
+                                "Server reports own away={} (we want {})",
+                                is_away, want_away
+                            );
+                        }
+                    }
+                }
+                None
+            }
             InMessage::CommandError(ref err) => {
                 for part in err.iter() {
                     log::info!("CommandError: id={:?}, msg={}", part.id, part.message);
@@ -1125,6 +1155,16 @@ impl Client {
                 user.nickname = nickname.clone();
             }
         }
+        // Away status is a clientupdate too, so it needs the same treatment:
+        // without it the member list would show us online right after we set
+        // an away message.
+        if let (Some(client_id), Some((away, message))) = (self.client_id, self.self_away.as_ref())
+        {
+            if let Some(user) = users.iter_mut().find(|u| u.id == client_id) {
+                user.is_away = *away;
+                user.away_message = if *away { message.clone() } else { None };
+            }
+        }
         users
     }
 
@@ -1161,6 +1201,16 @@ impl Client {
         if let (Some(client_id), Some(nickname)) = (self.client_id, self.self_nickname.as_ref()) {
             if let Some(user) = users.iter_mut().find(|u| u.id == client_id) {
                 user.nickname = nickname.clone();
+            }
+        }
+        // Away status is a clientupdate too, so it needs the same treatment:
+        // without it the member list would show us online right after we set
+        // an away message.
+        if let (Some(client_id), Some((away, message))) = (self.client_id, self.self_away.as_ref())
+        {
+            if let Some(user) = users.iter_mut().find(|u| u.id == client_id) {
+                user.is_away = *away;
+                user.away_message = if *away { message.clone() } else { None };
             }
         }
         users
@@ -1733,6 +1783,52 @@ impl Client {
 
         Ok(())
     }
+
+    /// Set our own away state (`clientupdate client_away=1` plus an optional
+    /// `client_away_message`), i.e. the desktop client's status menu.
+    ///
+    /// Away is a pure status flag: voice and text keep working, the server just
+    /// tells everybody else that we are away (and why). `away = false` clears
+    /// both fields. The server does not echo `clientupdate` back to the sender,
+    /// so the change is remembered as an override for [`Client::users`].
+    pub fn set_away(&mut self, away: bool, message: Option<&str>) -> Result<()> {
+        let con = self
+            .connection
+            .as_mut()
+            .ok_or(ConnectionError::NotConnected)?;
+
+        let message = normalize_away_message(away, message);
+
+        let mut cmd = OutCommand::new(
+            Direction::C2S,
+            Flags::empty(),
+            PacketType::Command,
+            "clientupdate",
+        );
+        cmd.write_arg("client_away", &(if away { 1 } else { 0 }));
+        if let Some(msg) = message.as_ref() {
+            cmd.write_arg("client_away_message", msg);
+        }
+
+        cmd.send(con).map_err(|e| Error::Internal(e.to_string()))?;
+
+        // `log::` on purpose: the tracing macros are compiled out of the release
+        // build, and this is the line that proves a status command left the app.
+        log::info!(
+            "Sent clientupdate client_away={} message={:?}",
+            away, message
+        );
+
+        self.self_away = Some((away, message.clone()));
+        if let Some(client_id) = self.client_id {
+            if let Some(user) = self.server_state.users.get_mut(&client_id) {
+                user.is_away = away;
+                user.away_message = message;
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// Convert tsclientlib CodecType to our AudioCodec
@@ -1990,6 +2086,18 @@ fn compute_file_permission_hints(perms: &HashMap<u32, i32>) -> u64 {
     hints
 }
 
+/// Away messages are optional and user-typed: trim what the UI sends, treat a
+/// blank one as "no message", and never attach one to the online status.
+fn normalize_away_message(away: bool, message: Option<&str>) -> Option<String> {
+    if !away {
+        return None;
+    }
+    message
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .map(str::to_string)
+}
+
 #[cfg(test)]
 mod whisper_routing_tests {
     use super::{
@@ -2079,5 +2187,40 @@ mod whisper_routing_tests {
         assert_eq!(content[4], GROUP_WHISPER_TARGET_ALL_CHANNELS, "TA");
         assert_eq!(&content[5..13], &6u64.to_be_bytes(), "U = server group id");
         assert_eq!(&content[13..], &[9, 9], "audio payload is passed through");
+    }
+}
+
+#[cfg(test)]
+mod away_status_tests {
+    use super::normalize_away_message;
+
+    #[test]
+    fn online_status_never_carries_a_message() {
+        // Going back online must clear the message, even if the UI still holds
+        // the text it sent a minute ago.
+        assert_eq!(normalize_away_message(false, Some("lunch")), None);
+        assert_eq!(normalize_away_message(false, None), None);
+    }
+
+    #[test]
+    fn away_message_is_trimmed() {
+        assert_eq!(
+            normalize_away_message(true, Some("  in a meeting  ")),
+            Some("in a meeting".to_string())
+        );
+    }
+
+    #[test]
+    fn blank_away_message_means_no_message() {
+        assert_eq!(normalize_away_message(true, Some("   ")), None);
+        assert_eq!(normalize_away_message(true, Some("")), None);
+        assert_eq!(normalize_away_message(true, None), None);
+    }
+
+    #[test]
+    fn away_without_message_is_still_away() {
+        // The flag and the message are independent: an away client with no
+        // message is exactly what the protocol allows.
+        assert_eq!(normalize_away_message(true, Some("")), None);
     }
 }
