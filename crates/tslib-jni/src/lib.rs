@@ -13,10 +13,12 @@ use jni::JNIEnv;
 /// Called when the native library is loaded via `System.loadLibrary`.
 #[unsafe(no_mangle)]
 pub extern "system" fn JNI_OnLoad(_vm: jni::JavaVM, _reserved: *mut std::ffi::c_void) -> jint {
-    // Initialize Android logger so Rust log macros output to logcat
+    // Initialize Android logger so Rust log macros output to logcat. Warnings and
+    // errors only: the informational lines name servers, nicknames and uids, and
+    // the system log is readable over USB debugging.
     android_logger::init_once(
         android_logger::Config::default()
-            .with_max_level(log::LevelFilter::Trace)
+            .with_max_level(log::LevelFilter::Warn)
             .with_tag("tslib-jni"),
     );
 
