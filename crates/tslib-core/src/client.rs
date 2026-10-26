@@ -175,8 +175,27 @@ impl Client {
     fn do_connect(&mut self) -> Result<()> {
         self.state = ConnectionState::Connecting;
 
+        // Resolve the name here, with the system resolver only (Android's, which
+        // honours Private DNS), and hand tsclientlib an IP address. Given a name,
+        // tsclientlib first looks up TeamSpeak SRV and TSDNS records, and on
+        // Android it sends those queries to Cloudflare (1.1.1.1) because it cannot
+        // read the system DNS configuration; a TSDNS server would also be told the
+        // address. Servers that rely on SRV or TSDNS records need their real
+        // address entered instead.
+        let server = {
+            use std::net::ToSocketAddrs;
+            self.config
+                .address
+                .to_socket_addrs()
+                .map_err(|e| ConnectionError::ConnectFailed(e.to_string()))?
+                .next()
+                .ok_or_else(|| {
+                    ConnectionError::ConnectFailed(format!("no address for {}", self.config.address))
+                })?
+        };
+
         // Build connection options using the new API
-        let mut options = TsConnection::build(self.config.address.clone())
+        let mut options = TsConnection::build(server)
             .name(self.config.nickname.clone())
             .identity(self.config.identity.to_ts_identity());
 
