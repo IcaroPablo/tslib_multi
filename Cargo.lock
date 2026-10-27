@@ -2796,7 +2796,6 @@ dependencies = [
  "jni",
  "log",
  "tokio",
- "tracing-log",
  "tslib-audio",
  "tslib-channel",
  "tslib-chat",

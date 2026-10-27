@@ -22,11 +22,11 @@ pub extern "system" fn JNI_OnLoad(_vm: jni::JavaVM, _reserved: *mut std::ffi::c_
             .with_tag("tslib-jni"),
     );
 
-    // Bridge tracing (used by tslib-core) → log (used by android_logger)
-    // This makes all tracing::info!() etc. from the core library visible in logcat
-    let _ = tracing_log::LogTracer::init();
+    // Only `log` records reach logcat. `tracing` events (tsclientlib, and the
+    // tracing macros in tslib-core) are not forwarded: nothing subscribes to
+    // them, and tracing's `log` feature is off.
 
-    log::info!("tslib-jni native library loaded (with tracing bridge)");
+    log::info!("tslib-jni native library loaded");
     jni::sys::JNI_VERSION_1_6
 }
 

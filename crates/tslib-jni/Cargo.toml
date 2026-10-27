@@ -19,4 +19,3 @@ tslib-channel = { path = "../tslib-channel" }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
 log = "0.4"
 android_logger = "0.14"
-tracing-log = "0.2"
