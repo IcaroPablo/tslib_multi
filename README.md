@@ -63,7 +63,7 @@ ANDROID_NDK=~/Android/Sdk/ndk/27.2.12479018 \
 CMAKE_POLICY_VERSION_MINIMUM=3.5 \
 cargo ndk -t arm64-v8a -t x86_64 \
   -o ../TS6_Droid/app/src/main/jniLibs \
-  build --release -p tslib-jni --features vendored-openssl
+  build --release -p tslib-jni
 ```
 
 ### Exemples

@@ -30,7 +30,7 @@ cargo ndk \
     -t arm64-v8a \
     -t x86_64 \
     -o "${OUTPUT_DIR}" \
-    build ${PROFILE} -p tslib-jni --features vendored-openssl -j10
+    build ${PROFILE} -p tslib-jni -j10
 
 echo "Done. Libraries:"
 find "${OUTPUT_DIR}" -name "*.so" -type f -exec ls -lh {} \; 2>/dev/null || echo "(no .so files found)"

@@ -40,7 +40,7 @@ jobs:
             -t arm64-v8a \
             -t x86_64 \
             -o dist/jniLibs \
-            build --release -p tslib-jni --features vendored-openssl -j4
+            build --release -p tslib-jni -j4
           ls -lh dist/jniLibs/*/libtslib_jni.so
 
       - name: Prepare release assets

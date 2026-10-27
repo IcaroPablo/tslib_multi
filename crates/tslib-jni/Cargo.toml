@@ -17,11 +17,6 @@ tslib-audio = { path = "../tslib-audio" }
 tslib-chat = { path = "../tslib-chat" }
 tslib-channel = { path = "../tslib-channel" }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
-openssl = { version = "0.10", features = ["vendored"], optional = true }
 log = "0.4"
 android_logger = "0.14"
 tracing-log = "0.2"
-
-[features]
-default = []
-vendored-openssl = ["openssl"]
