@@ -409,6 +409,35 @@ pub fn create_java_event<'a>(
             put_long(env, &map, "permission_hints", *permission_hints as i64);
             "channel_permissions_updated"
         }
+        Event::StreamStarted { stream } => {
+            put_int(env, &map, "client_id", stream.client_id as i32);
+            put_string(env, &map, "stream_id", &stream.id);
+            put_string(env, &map, "name", &stream.name);
+            put_int(env, &map, "kind", stream.kind as i32);
+            put_int(env, &map, "bitrate", stream.bitrate as i32);
+            put_boolean(env, &map, "has_audio", stream.has_audio);
+            "stream_started"
+        }
+        Event::StreamStopped { client_id, stream_id } => {
+            put_int(env, &map, "client_id", *client_id as i32);
+            put_string(env, &map, "stream_id", stream_id);
+            "stream_stopped"
+        }
+        Event::StreamJoinResponse { client_id, stream_id, accepted, offer } => {
+            put_int(env, &map, "client_id", *client_id as i32);
+            put_string(env, &map, "stream_id", stream_id);
+            put_boolean(env, &map, "accepted", *accepted);
+            if let Some(offer) = offer {
+                put_string(env, &map, "offer", offer);
+            }
+            "stream_join_response"
+        }
+        Event::StreamSignaling { client_id, stream_id, json } => {
+            put_int(env, &map, "client_id", *client_id as i32);
+            put_string(env, &map, "stream_id", stream_id);
+            put_string(env, &map, "json", json);
+            "stream_signaling"
+        }
     };
 
     // Create the Event object

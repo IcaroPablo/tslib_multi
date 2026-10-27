@@ -38,11 +38,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Pinned: hickory 0.26 (DNS, from 04aa249) crashes on Android during domain
 # resolution; 3fbfa26 is the last revision with the working hickory 0.24 stack.
 # Our fork (IcaroPablo/tsclientlib, branch telespeak) is 3fbfa26 without the
-# server-nickname lookup, and with the message handlers generated in a fixed order.
-tsclientlib = { git = "https://github.com/IcaroPablo/tsclientlib.git", rev = "76fc67ad39c3abaa025e9cc815c3be1854537382" }
-tsproto = { git = "https://github.com/IcaroPablo/tsclientlib.git", rev = "76fc67ad39c3abaa025e9cc815c3be1854537382" }
-tsproto-packets = { git = "https://github.com/IcaroPablo/tsclientlib.git", rev = "76fc67ad39c3abaa025e9cc815c3be1854537382" }
-tsproto-types = { git = "https://github.com/IcaroPablo/tsclientlib.git", rev = "76fc67ad39c3abaa025e9cc815c3be1854537382" }
+# server-nickname lookup, with the message handlers generated in a fixed order,
+# and with the raw server commands passed on (for TeamSpeak 6 streams).
+tsclientlib = { git = "https://github.com/IcaroPablo/tsclientlib.git", rev = "b58e2fff86bbf53ba47d8d18f082413c7ba16bff" }
+tsproto = { git = "https://github.com/IcaroPablo/tsclientlib.git", rev = "b58e2fff86bbf53ba47d8d18f082413c7ba16bff" }
+tsproto-packets = { git = "https://github.com/IcaroPablo/tsclientlib.git", rev = "b58e2fff86bbf53ba47d8d18f082413c7ba16bff" }
+tsproto-types = { git = "https://github.com/IcaroPablo/tsclientlib.git", rev = "b58e2fff86bbf53ba47d8d18f082413c7ba16bff" }
 
 # Audio
 opus = "0.3"

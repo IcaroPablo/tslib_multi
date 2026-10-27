@@ -2639,7 +2639,7 @@ dependencies = [
 [[package]]
 name = "ts-bookkeeping"
 version = "0.1.0"
-source = "git+https://github.com/IcaroPablo/tsclientlib.git?rev=76fc67ad39c3abaa025e9cc815c3be1854537382#76fc67ad39c3abaa025e9cc815c3be1854537382"
+source = "git+https://github.com/IcaroPablo/tsclientlib.git?rev=b58e2fff86bbf53ba47d8d18f082413c7ba16bff#b58e2fff86bbf53ba47d8d18f082413c7ba16bff"
 dependencies = [
  "base64 0.22.1",
  "heck 0.5.0",
@@ -2659,7 +2659,7 @@ dependencies = [
 [[package]]
 name = "tsclientlib"
 version = "0.2.0"
-source = "git+https://github.com/IcaroPablo/tsclientlib.git?rev=76fc67ad39c3abaa025e9cc815c3be1854537382#76fc67ad39c3abaa025e9cc815c3be1854537382"
+source = "git+https://github.com/IcaroPablo/tsclientlib.git?rev=b58e2fff86bbf53ba47d8d18f082413c7ba16bff#b58e2fff86bbf53ba47d8d18f082413c7ba16bff"
 dependencies = [
  "audiopus",
  "base64 0.22.1",
@@ -2818,7 +2818,7 @@ dependencies = [
 [[package]]
 name = "tsproto"
 version = "0.2.0"
-source = "git+https://github.com/IcaroPablo/tsclientlib.git?rev=76fc67ad39c3abaa025e9cc815c3be1854537382#76fc67ad39c3abaa025e9cc815c3be1854537382"
+source = "git+https://github.com/IcaroPablo/tsclientlib.git?rev=b58e2fff86bbf53ba47d8d18f082413c7ba16bff#b58e2fff86bbf53ba47d8d18f082413c7ba16bff"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -2848,7 +2848,7 @@ dependencies = [
 [[package]]
 name = "tsproto-packets"
 version = "0.1.0"
-source = "git+https://github.com/IcaroPablo/tsclientlib.git?rev=76fc67ad39c3abaa025e9cc815c3be1854537382#76fc67ad39c3abaa025e9cc815c3be1854537382"
+source = "git+https://github.com/IcaroPablo/tsclientlib.git?rev=b58e2fff86bbf53ba47d8d18f082413c7ba16bff#b58e2fff86bbf53ba47d8d18f082413c7ba16bff"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.13.2",
@@ -2863,7 +2863,7 @@ dependencies = [
 [[package]]
 name = "tsproto-structs"
 version = "0.2.0"
-source = "git+https://github.com/IcaroPablo/tsclientlib.git?rev=76fc67ad39c3abaa025e9cc815c3be1854537382#76fc67ad39c3abaa025e9cc815c3be1854537382"
+source = "git+https://github.com/IcaroPablo/tsclientlib.git?rev=b58e2fff86bbf53ba47d8d18f082413c7ba16bff#b58e2fff86bbf53ba47d8d18f082413c7ba16bff"
 dependencies = [
  "base64 0.22.1",
  "csv",
@@ -2876,7 +2876,7 @@ dependencies = [
 [[package]]
 name = "tsproto-types"
 version = "0.1.0"
-source = "git+https://github.com/IcaroPablo/tsclientlib.git?rev=76fc67ad39c3abaa025e9cc815c3be1854537382#76fc67ad39c3abaa025e9cc815c3be1854537382"
+source = "git+https://github.com/IcaroPablo/tsclientlib.git?rev=b58e2fff86bbf53ba47d8d18f082413c7ba16bff#b58e2fff86bbf53ba47d8d18f082413c7ba16bff"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.13.2",

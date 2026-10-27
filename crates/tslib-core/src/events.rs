@@ -4,6 +4,7 @@
 
 use crate::connection::ConnectionState;
 use crate::state::{Channel, User};
+use crate::streams::StreamInfo;
 use async_trait::async_trait;
 
 /// Events that can be emitted by the client
@@ -140,6 +141,26 @@ pub enum Event {
     ChannelPermissionsUpdated {
         channel_id: u64,
         permission_hints: u64,
+    },
+
+    // Stream events (TeamSpeak 6 screen sharing)
+    /// A stream in our channel can be watched: it started, its streamer came into
+    /// our channel, or we came into theirs
+    StreamStarted { stream: StreamInfo },
+    /// A stream in our channel ended or left our view
+    StreamStopped { client_id: u16, stream_id: String },
+    /// The streamer answered our join request; when accepted, with its WebRTC offer
+    StreamJoinResponse {
+        client_id: u16,
+        stream_id: String,
+        accepted: bool,
+        offer: Option<String>,
+    },
+    /// WebRTC signalling from a streamer, as JSON
+    StreamSignaling {
+        client_id: u16,
+        stream_id: String,
+        json: String,
     },
 }
 

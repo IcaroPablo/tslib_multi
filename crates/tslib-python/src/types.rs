@@ -353,6 +353,33 @@ pub fn event_to_dict<'py>(py: Python<'py>, event: &tslib_core::events::Event) ->
             let _ = dict.set_item("channel_id", channel_id);
             let _ = dict.set_item("permission_hints", permission_hints);
         }
+        Event::StreamStarted { stream } => {
+            let _ = dict.set_item("type", "stream_started");
+            let _ = dict.set_item("client_id", stream.client_id);
+            let _ = dict.set_item("stream_id", stream.id.as_str());
+            let _ = dict.set_item("name", stream.name.as_str());
+            let _ = dict.set_item("kind", stream.kind);
+            let _ = dict.set_item("bitrate", stream.bitrate);
+            let _ = dict.set_item("has_audio", stream.has_audio);
+        }
+        Event::StreamStopped { client_id, stream_id } => {
+            let _ = dict.set_item("type", "stream_stopped");
+            let _ = dict.set_item("client_id", client_id);
+            let _ = dict.set_item("stream_id", stream_id.as_str());
+        }
+        Event::StreamJoinResponse { client_id, stream_id, accepted, offer } => {
+            let _ = dict.set_item("type", "stream_join_response");
+            let _ = dict.set_item("client_id", client_id);
+            let _ = dict.set_item("stream_id", stream_id.as_str());
+            let _ = dict.set_item("accepted", accepted);
+            let _ = dict.set_item("offer", offer.as_deref());
+        }
+        Event::StreamSignaling { client_id, stream_id, json } => {
+            let _ = dict.set_item("type", "stream_signaling");
+            let _ = dict.set_item("client_id", client_id);
+            let _ = dict.set_item("stream_id", stream_id.as_str());
+            let _ = dict.set_item("json", json.as_str());
+        }
     }
 
     dict

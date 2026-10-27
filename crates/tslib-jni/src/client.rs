@@ -1051,3 +1051,61 @@ pub extern "system" fn Java_dev_tslib_Client_nativeSetAway(
     let handle = ptr_to_handle(ptr);
     to_jni_result(&mut env, handle.client.set_away(away, message.as_deref()));
 }
+
+/// `Client.joinStream(clientId, streamId)` - ask to watch a stream. The answer
+/// arrives as a `stream_join_response` event.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_tslib_Client_nativeJoinStream(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+    client_id: jint,
+    stream_id: JString,
+) {
+    let stream_id = match require_string(&mut env, &stream_id) {
+        Ok(s) => s,
+        Err(()) => return,
+    };
+    let handle = ptr_to_handle(ptr);
+    to_jni_result(&mut env, handle.client.join_stream(client_id as u16, &stream_id));
+}
+
+/// `Client.leaveStream(clientId, streamId)`
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_tslib_Client_nativeLeaveStream(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+    client_id: jint,
+    stream_id: JString,
+) {
+    let stream_id = match require_string(&mut env, &stream_id) {
+        Ok(s) => s,
+        Err(()) => return,
+    };
+    let handle = ptr_to_handle(ptr);
+    to_jni_result(&mut env, handle.client.leave_stream(client_id as u16, &stream_id));
+}
+
+/// `Client.sendStreamSignaling(clientId, streamId, json)` - a WebRTC answer or
+/// ICE candidate for a streamer.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_tslib_Client_nativeSendStreamSignaling(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+    client_id: jint,
+    stream_id: JString,
+    json: JString,
+) {
+    let stream_id = match require_string(&mut env, &stream_id) {
+        Ok(s) => s,
+        Err(()) => return,
+    };
+    let json = match require_string(&mut env, &json) {
+        Ok(s) => s,
+        Err(()) => return,
+    };
+    let handle = ptr_to_handle(ptr);
+    to_jni_result(&mut env, handle.client.send_stream_signaling(client_id as u16, &stream_id, &json));
+}

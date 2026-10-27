@@ -8,7 +8,8 @@ use crate::connection::ConnectionState;
 use crate::error::{ConnectionError, Error, Result};
 use crate::events::{AudioCodec, Event, EventHandler};
 use crate::state::{Channel, ServerInfo, ServerState, User};
-use std::collections::HashMap;
+use crate::streams::{self, StreamCommand, StreamInfo};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::broadcast;
@@ -130,6 +131,14 @@ pub struct Client {
     /// sequence, payload, whisper flag) instead of being emitted
     /// as an `AudioReceived` event (which waits for the next event pull).
     audio_sink: Option<Arc<dyn Fn(u16, u16, &[u8], bool) + Send + Sync>>,
+    /// Clients the server flags as streaming (`client_is_streaming`)
+    streaming_clients: HashSet<u16>,
+    /// Every stream the server described, by stream id (a client can have several)
+    known_streams: HashMap<String, StreamInfo>,
+    /// Streaming clients whose stream details were asked for
+    stream_info_requested: HashSet<u16>,
+    /// The streams reported to the embedder (those in our channel), by stream id
+    shown_streams: HashMap<String, StreamInfo>,
 }
 
 impl Client {
@@ -163,6 +172,10 @@ impl Client {
             whisper_channels: Vec::new(),
             whisper_groups: Vec::new(),
             audio_sink: None,
+            streaming_clients: HashSet::new(),
+            known_streams: HashMap::new(),
+            stream_info_requested: HashSet::new(),
+            shown_streams: HashMap::new(),
         };
 
         // Establish connection
@@ -195,9 +208,12 @@ impl Client {
         };
 
         // Build connection options using the new API
+        // Raw commands carry the TeamSpeak 6 stream commands and flags, which
+        // tsclientlib's declarations do not know (see the streams module)
         let mut options = TsConnection::build(server)
             .name(self.config.nickname.clone())
-            .identity(self.config.identity.to_ts_identity());
+            .identity(self.config.identity.to_ts_identity())
+            .raw_commands(true);
 
         // Add password if specified
         if let Some(ref password) = self.config.password {
@@ -273,6 +289,7 @@ impl Client {
         for item in stream_items {
             events.extend(self.process_stream_item(item).await);
         }
+        events.extend(self.update_streams());
 
         if disconnected {
             self.state = ConnectionState::Disconnected;
@@ -339,6 +356,7 @@ impl Client {
         for item in stream_items {
             events.extend(self.process_stream_item(item).await);
         }
+        events.extend(self.update_streams());
 
         if disconnected {
             self.state = ConnectionState::Disconnected;
@@ -705,6 +723,7 @@ impl Client {
                 let _ = self.event_tx.send(event.clone());
                 vec![event]
             }
+            StreamItem::RawCommand(raw) => self.process_raw_command(&raw),
             other => {
                 debug!("Unhandled StreamItem variant: {:?}", std::mem::discriminant(&other));
                 Vec::new()
@@ -1698,6 +1717,154 @@ impl Client {
         cmd.write_arg("dirname", &dirname);
         cmd.send(con).map_err(|e| Error::Internal(e.to_string()))?;
         Ok(())
+    }
+
+    /// The streams that can be watched: those of clients in our channel
+    pub fn streams(&self) -> Vec<StreamInfo> {
+        self.shown_streams.values().cloned().collect()
+    }
+
+    /// Ask to watch a stream. The streamer's answer arrives as a
+    /// `StreamJoinResponse` event, with its WebRTC offer when it accepts.
+    pub fn join_stream(&mut self, client_id: u16, stream_id: &str) -> Result<()> {
+        self.send_join_stream_request(client_id, stream_id, false)
+    }
+
+    /// Stop watching a stream
+    pub fn leave_stream(&mut self, client_id: u16, stream_id: &str) -> Result<()> {
+        self.send_join_stream_request(client_id, stream_id, true)
+    }
+
+    fn send_join_stream_request(&mut self, client_id: u16, stream_id: &str, remove: bool) -> Result<()> {
+        let con = self.connection.as_mut().ok_or(ConnectionError::NotConnected)?;
+        let mut cmd = OutCommand::new(Direction::C2S, Flags::empty(), PacketType::Command, "joinstreamrequest");
+        cmd.write_arg("clid", &client_id);
+        cmd.write_arg("id", &stream_id);
+        cmd.write_arg("msg", &"");
+        cmd.write_arg("is_remove", &u8::from(remove));
+        cmd.send_with_result(con).map_err(|e| Error::Internal(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Send WebRTC signalling (an answer or an ICE candidate, as JSON in
+    /// TeamSpeak's `{"cmd":…,"args":…}` form) to a streamer
+    pub fn send_stream_signaling(&mut self, client_id: u16, stream_id: &str, json: &str) -> Result<()> {
+        let con = self.connection.as_mut().ok_or(ConnectionError::NotConnected)?;
+        let mut cmd = OutCommand::new(Direction::C2S, Flags::empty(), PacketType::Command, "streamsignaling");
+        cmd.write_arg("clid", &client_id);
+        cmd.write_arg("id", &stream_id);
+        cmd.write_arg("json", &json);
+        cmd.send_with_result(con).map_err(|e| Error::Internal(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Handle the stream commands in a raw command from the server
+    fn process_raw_command(&mut self, raw: &str) -> Vec<Event> {
+        let mut events = Vec::new();
+        for command in streams::parse(raw) {
+            match command {
+                StreamCommand::Started(info) => {
+                    self.streaming_clients.insert(info.client_id);
+                    self.stream_info_requested.remove(&info.client_id);
+                    self.known_streams.insert(info.id.clone(), info);
+                }
+                StreamCommand::ClientStreaming { client_id, streaming: true } => {
+                    self.streaming_clients.insert(client_id);
+                }
+                StreamCommand::ClientStreaming { client_id, streaming: false } => {
+                    self.streaming_clients.remove(&client_id);
+                    self.stream_info_requested.remove(&client_id);
+                    self.known_streams.retain(|_, s| s.client_id != client_id);
+                }
+                // The client may still have other streams; its streaming flag says
+                StreamCommand::Stopped { stream_id, .. } => {
+                    self.known_streams.remove(&stream_id);
+                }
+                StreamCommand::JoinResponse { client_id, stream_id, accepted, offer } => {
+                    events.push(Event::StreamJoinResponse { client_id, stream_id, accepted, offer });
+                }
+                StreamCommand::Signaling { client_id, stream_id, json } => {
+                    events.push(Event::StreamSignaling { client_id, stream_id, json });
+                }
+            }
+        }
+        for event in &events {
+            let _ = self.event_tx.send(event.clone());
+        }
+        events
+    }
+
+    /// Bring the reported streams in line with our channel: asks for the
+    /// details of streams that are not known yet, and reports the streams that
+    /// came into or went out of view. Runs after each batch of stream items, so
+    /// the book already knows the clients of the batch's commands.
+    fn update_streams(&mut self) -> Vec<Event> {
+        let Some(con) = self.connection.as_mut() else { return Vec::new() };
+        let Ok(state) = con.get_state() else { return Vec::new() };
+        let Some(own_channel) = state.clients.get(&state.own_client).map(|c| c.channel) else {
+            return Vec::new();
+        };
+        let in_our_channel: HashSet<u16> = state
+            .clients
+            .values()
+            .filter(|c| c.channel == own_channel && c.id != state.own_client)
+            .map(|c| c.id.0)
+            .collect();
+        let present: HashSet<u16> = state.clients.keys().map(|id| id.0).collect();
+
+        // Forget clients that left the server
+        self.streaming_clients.retain(|id| present.contains(id));
+        self.stream_info_requested.retain(|id| present.contains(id));
+        self.known_streams.retain(|_, s| present.contains(&s.client_id));
+
+        // The server only describes streams in our own channel
+        let mut unknown: Vec<u16> = self
+            .streaming_clients
+            .iter()
+            .filter(|id| {
+                in_our_channel.contains(id)
+                    && !self.known_streams.values().any(|s| s.client_id == **id)
+                    && !self.stream_info_requested.contains(id)
+            })
+            .copied()
+            .collect();
+        unknown.sort_unstable();
+        for chunk in unknown.chunks(16) {
+            let mut cmd = OutCommand::new(Direction::C2S, Flags::empty(), PacketType::Command, "requeststreaminfo");
+            for (i, client_id) in chunk.iter().enumerate() {
+                if i > 0 {
+                    cmd.start_new_part();
+                }
+                cmd.write_arg("clid", client_id);
+            }
+            match cmd.send_with_result(con) {
+                Ok(_) => self.stream_info_requested.extend(chunk),
+                Err(e) => warn!("Could not ask for stream info: {}", e),
+            }
+        }
+
+        let visible: HashMap<String, StreamInfo> = self
+            .known_streams
+            .iter()
+            .filter(|(_, s)| in_our_channel.contains(&s.client_id))
+            .map(|(id, info)| (id.clone(), info.clone()))
+            .collect();
+        let mut events = Vec::new();
+        for (id, info) in &self.shown_streams {
+            if !visible.contains_key(id) {
+                events.push(Event::StreamStopped { client_id: info.client_id, stream_id: id.clone() });
+            }
+        }
+        for (id, info) in &visible {
+            if self.shown_streams.get(id) != Some(info) {
+                events.push(Event::StreamStarted { stream: info.clone() });
+            }
+        }
+        self.shown_streams = visible;
+        for event in &events {
+            let _ = self.event_tx.send(event.clone());
+        }
+        events
     }
 
     /// Subscribe to events

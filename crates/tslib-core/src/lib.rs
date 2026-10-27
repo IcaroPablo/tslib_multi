@@ -40,6 +40,7 @@ pub mod error;
 pub mod events;
 pub mod identity;
 pub mod state;
+pub mod streams;
 
 // Re-exports
 pub use client::{Client, FileEntry, NetworkStats};
@@ -49,3 +50,4 @@ pub use error::{Error, Result};
 pub use events::{AudioCodec, Event, EventHandler};
 pub use identity::Identity;
 pub use state::{Channel, ServerState, User};
+pub use streams::StreamInfo;
