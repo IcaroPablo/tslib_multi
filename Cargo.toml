@@ -61,6 +61,12 @@ cbindgen = "0.26"
 rand = "0.8"
 base64 = "0.21"
 
+[patch.crates-io]
+# opus 1.6.1 from the crates/audiopus-sys/opus submodule, built without CMake,
+# for both tsclientlib (through audiopus) and the opus crate. audiopus_sys 0.2.2
+# bundles an opus snapshot from before 1.4.
+audiopus_sys = { path = "crates/audiopus-sys" }
+
 [workspace.lints.rust]
 unsafe_code = "warn"
 missing_docs = "warn"

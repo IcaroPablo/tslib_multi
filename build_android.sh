@@ -18,9 +18,6 @@ fi
 export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$HOME/Android/Sdk/ndk/27.2.12479018}"
 export ANDROID_NDK="$ANDROID_NDK_HOME"
 
-# CMake compatibility (CMake 4.x needs this for older CMakeLists.txt)
-export CMAKE_POLICY_VERSION_MINIMUM=3.5
-
 echo "Building tslib-jni for Android..."
 echo "NDK: ${ANDROID_NDK_HOME}"
 echo "Output: ${OUTPUT_DIR}"

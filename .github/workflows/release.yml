@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -27,8 +29,6 @@ jobs:
       # covers image layout changes
       - name: Build
         shell: bash
-        env:
-          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
         run: |
           if [ -z "${ANDROID_NDK_HOME:-}" ]; then
             ANDROID_NDK_HOME="$(ls -d /usr/local/lib/android/sdk/ndk/* 2>/dev/null | sort -V | tail -1)"

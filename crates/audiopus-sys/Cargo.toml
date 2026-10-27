@@ -1,0 +1,15 @@
+# Stands in for audiopus_sys from crates.io (see [patch.crates-io] in the
+# workspace Cargo.toml), so that tsclientlib and the opus crate both use this
+# opus. The bindings are audiopus_sys 0.2.2's; opus is the submodule in opus/,
+# built with cc instead of CMake.
+[package]
+name = "audiopus_sys"
+version = "0.2.2"
+edition = "2021"
+description = "audiopus_sys 0.2.2 bindings with opus built from the opus/ submodule"
+license = "ISC"
+links = "opus"
+publish = false
+
+[build-dependencies]
+cc = "1.0"

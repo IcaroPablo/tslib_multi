@@ -40,7 +40,7 @@ Bibliothèque modulaire et cross-platform pour créer des clients TeamSpeak 3/6 
 ### Build
 
 ```bash
-git clone https://github.com/flamme-demon/tslib_multi.git
+git clone --recursive https://github.com/flamme-demon/tslib_multi.git
 cd tslib_multi
 
 # Workspace complet
@@ -60,7 +60,6 @@ Nécessite [cargo-ndk](https://github.com/nickelc/cargo-ndk) et le NDK Android.
 
 # Ou manuellement
 ANDROID_NDK=~/Android/Sdk/ndk/27.2.12479018 \
-CMAKE_POLICY_VERSION_MINIMUM=3.5 \
 cargo ndk -t arm64-v8a -t x86_64 \
   -o ../TS6_Droid/app/src/main/jniLibs \
   build --release -p tslib-jni

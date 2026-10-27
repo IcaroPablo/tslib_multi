@@ -16,6 +16,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -28,16 +30,13 @@ jobs:
 
       # Host unit tests (identity import/export roundtrip etc.) — pure Rust,
       # runs on the ubuntu toolchain before the Android cross-build
-      - name: Run tslib-core tests
-        run: cargo test -p tslib-core
+      - name: Run tslib-core and opus tests
+        run: cargo test -p tslib-core -p audiopus_sys
 
-      # vendored OpenSSL needs perl+make+cmake — all present on ubuntu-latest.
       # Uses the NDK preinstalled on GitHub runners (ANDROID_NDK_HOME is set
       # by the image); the glob fallback covers image layout changes.
       - name: Build
         shell: bash
-        env:
-          CMAKE_POLICY_VERSION_MINIMUM: "3.5"
         run: |
           if [ -z "${ANDROID_NDK_HOME:-}" ]; then
             ANDROID_NDK_HOME="$(ls -d /usr/local/lib/android/sdk/ndk/* 2>/dev/null | sort -V | tail -1)"
