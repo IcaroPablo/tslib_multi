@@ -2,6 +2,7 @@
 
 use crate::config::{AudioConfig, OpusApplication};
 use crate::error::{AudioError, Result};
+use audiopus_sys as ffi;
 
 /// Audio encoder trait
 pub trait Encoder: Send {
@@ -175,27 +176,89 @@ impl Encoder for OpusEncoder {
     }
 }
 
-/// Opus decoder
+/// Opus decoder. Holds libopus's decoder directly: the opus crate's has no
+/// way to set the decoder complexity, which switches the neural features on.
 pub struct OpusDecoder {
-    inner: opus::Decoder,
+    inner: *mut ffi::OpusDecoder,
     channels: u16,
     #[allow(dead_code)]
     frame_size: usize,
 }
 
+// The decoder state is plain memory owned by this value alone
+unsafe impl Send for OpusDecoder {}
+
+impl Drop for OpusDecoder {
+    fn drop(&mut self) {
+        unsafe { ffi::opus_decoder_destroy(self.inner) }
+    }
+}
+
+/// libopus's message for an error code.
+fn opus_error(code: i32) -> String {
+    unsafe { std::ffi::CStr::from_ptr(ffi::opus_strerror(code)) }
+        .to_string_lossy()
+        .into_owned()
+}
+
 impl OpusDecoder {
     /// Create a new Opus decoder
     pub fn new(config: &AudioConfig) -> Result<Self> {
-        let channels = opus_channels(config.channels)?;
+        opus_channels(config.channels)?;
 
-        let decoder = opus::Decoder::new(config.sample_rate, channels)
-            .map_err(|e| AudioError::Codec(format!("Failed to create Opus decoder: {}", e)))?;
+        let mut error = 0;
+        let inner = unsafe {
+            ffi::opus_decoder_create(config.sample_rate as i32, config.channels as i32, &mut error)
+        };
+        if error != ffi::OPUS_OK || inner.is_null() {
+            return Err(AudioError::Codec(format!(
+                "Failed to create Opus decoder: {}",
+                opus_error(error)
+            )));
+        }
 
         Ok(Self {
-            inner: decoder,
+            inner,
             channels: config.channels,
             frame_size: config.frame_size_samples(),
         })
+    }
+
+    /// Set the decoder complexity (0-10, libopus default 0). With opus built
+    /// with its neural features, 5 turns on deep PLC, 6 adds LACE and 7 uses
+    /// NoLACE instead; without them every value decodes as 0 does.
+    pub fn set_complexity(&mut self, complexity: i32) -> Result<()> {
+        let ret = unsafe {
+            ffi::opus_decoder_ctl(self.inner, ffi::OPUS_SET_COMPLEXITY_REQUEST, complexity)
+        };
+        if ret != ffi::OPUS_OK {
+            return Err(AudioError::Codec(format!(
+                "Failed to set decoder complexity: {}",
+                opus_error(ret)
+            )));
+        }
+        Ok(())
+    }
+
+    /// Decode into `output`; empty `data` conceals a lost frame. Returns the
+    /// samples per channel.
+    fn decode_raw(&mut self, data: &[u8], output: &mut [i16], fec: bool) -> std::result::Result<usize, String> {
+        let input = if data.is_empty() { std::ptr::null() } else { data.as_ptr() };
+        let ret = unsafe {
+            ffi::opus_decode(
+                self.inner,
+                input,
+                data.len() as i32,
+                output.as_mut_ptr(),
+                (output.len() / self.channels as usize) as i32,
+                fec as i32,
+            )
+        };
+        if ret < 0 {
+            Err(opus_error(ret))
+        } else {
+            Ok(ret as usize)
+        }
     }
 
     /// Decode a packet with FEC decoding enabled. When the preceding packet
@@ -204,8 +267,7 @@ impl OpusDecoder {
     /// — that is how a single missing frame is recovered from its successor.
     pub fn decode_with_fec(&mut self, data: &[u8], output: &mut [i16]) -> Result<usize> {
         let samples = self
-            .inner
-            .decode(data, output, true)
+            .decode_raw(data, output, true)
             .map_err(|e| AudioError::Decode(format!("Opus FEC decode error: {}", e)))?;
 
         // samples is per channel, return total samples written
@@ -216,8 +278,7 @@ impl OpusDecoder {
 impl Decoder for OpusDecoder {
     fn decode(&mut self, data: &[u8], output: &mut [i16]) -> Result<usize> {
         let samples = self
-            .inner
-            .decode(data, output, false)
+            .decode_raw(data, output, false)
             .map_err(|e| AudioError::Decode(format!("Opus decode error: {}", e)))?;
 
         // samples is per channel, return total samples written
@@ -225,20 +286,20 @@ impl Decoder for OpusDecoder {
     }
 
     fn decode_plc(&mut self, output: &mut [i16]) -> Result<usize> {
-        // Packet loss concealment: pass None as data
-        // The frame_size parameter tells opus how many samples to generate
+        // Packet loss concealment: no data. The output length tells opus how
+        // many samples to generate
         let samples = self
-            .inner
-            .decode(&[], output, true) // fec=true enables forward error correction
+            .decode_raw(&[], output, false)
             .map_err(|e| AudioError::Decode(format!("Opus PLC error: {}", e)))?;
 
         Ok(samples * self.channels as usize)
     }
 
     fn reset(&mut self) -> Result<()> {
-        self.inner
-            .reset_state()
-            .map_err(|e| AudioError::Codec(format!("Failed to reset decoder: {}", e)))?;
+        let ret = unsafe { ffi::opus_decoder_ctl(self.inner, ffi::OPUS_RESET_STATE) };
+        if ret != ffi::OPUS_OK {
+            return Err(AudioError::Codec(format!("Failed to reset decoder: {}", opus_error(ret))));
+        }
         Ok(())
     }
 }
@@ -315,6 +376,43 @@ mod tests {
         let config = AudioConfig::default();
         let mut encoder = OpusEncoder::new(&config).unwrap();
         assert!(encoder.reset().is_ok());
+    }
+
+    #[test]
+    fn decoder_complexity() {
+        let config = AudioConfig::default();
+        let mut decoder = OpusDecoder::new(&config).unwrap();
+        for complexity in [0, 5, 6, 7] {
+            assert!(decoder.set_complexity(complexity).is_ok());
+        }
+        assert!(decoder.set_complexity(11).is_err());
+    }
+
+    #[test]
+    fn decoder_conceals_a_lost_frame() {
+        let config = AudioConfig::default();
+        let codec = OpusCodec::new(config.clone()).unwrap();
+        let mut encoder = codec.create_encoder().unwrap();
+        let mut decoder = codec.create_decoder().unwrap();
+        decoder.set_complexity(7).unwrap();
+
+        let frame_size = config.frame_size_samples();
+        let mut encoded = vec![0u8; 4000];
+        let mut pcm_out = vec![0i16; frame_size];
+        for frame in 0..10 {
+            let pcm_in: Vec<i16> = (0..frame_size)
+                .map(|i| {
+                    let t = (frame * frame_size + i) as f32 / config.sample_rate as f32;
+                    (8000.0 * (2.0 * std::f32::consts::PI * 220.0 * t).sin()) as i16
+                })
+                .collect();
+            let len = encoder.encode(&pcm_in, &mut encoded).unwrap();
+            if frame == 5 {
+                assert_eq!(decoder.decode_plc(&mut pcm_out).unwrap(), frame_size);
+                assert_eq!(decoder.decode_with_fec(&encoded[..len], &mut pcm_out).unwrap(), frame_size);
+            }
+            assert_eq!(decoder.decode(&encoded[..len], &mut pcm_out).unwrap(), frame_size);
+        }
     }
 
     #[test]

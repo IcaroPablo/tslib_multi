@@ -19,11 +19,17 @@ serde.workspace = true
 
 # Audio
 opus.workspace = true
+# The patched one in crates/audiopus-sys, for the decoder
+audiopus_sys = "0.2"
 cpal.workspace = true
 rubato.workspace = true
 
 # Ring buffer for audio
 ringbuf = "0.3"
+
+[features]
+# Build opus with its neural decoder features (see crates/audiopus-sys/build.rs)
+opus-dnn = ["audiopus_sys/dnn"]
 
 [dev-dependencies]
 tracing-subscriber.workspace = true

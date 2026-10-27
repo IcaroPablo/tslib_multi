@@ -10,6 +10,10 @@ description = "Java JNI bindings for tslib"
 name = "tslib_jni"
 crate-type = ["cdylib"]
 
+[features]
+# Build opus with its neural decoder features (see crates/audiopus-sys/build.rs)
+opus-dnn = ["tslib-audio/opus-dnn"]
+
 [dependencies]
 jni = "0.21"
 tslib-core = { path = "../tslib-core" }

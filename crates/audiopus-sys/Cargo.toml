@@ -11,5 +11,9 @@ license = "ISC"
 links = "opus"
 publish = false
 
+[features]
+# The decoder's neural networks (deep PLC, LACE, NoLACE); see build.rs
+dnn = []
+
 [build-dependencies]
 cc = "1.0"

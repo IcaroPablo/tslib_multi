@@ -181,6 +181,19 @@ pub extern "system" fn Java_dev_tslib_OpusCodec_nativeDecodePlc<'local>(
     i16_slice_to_jbyte_array(&mut env, &output[..len])
 }
 
+/// `OpusCodec.setDecoderComplexity(complexity)` — 0 to 10; see
+/// `OpusDecoder::set_complexity` for what 5, 6 and 7 turn on.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_tslib_OpusCodec_nativeSetDecoderComplexity(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+    complexity: jint,
+) {
+    let handle = ptr_to_opus(ptr);
+    audio_to_jni_result(&mut env, handle.decoder.set_complexity(complexity));
+}
+
 /// Convert an i16 sample slice to a little-endian jbyteArray.
 fn i16_slice_to_jbyte_array<'local>(
     env: &mut JNIEnv<'local>,
