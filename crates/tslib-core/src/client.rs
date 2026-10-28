@@ -22,7 +22,7 @@ use tsclientlib::{Connection as TsConnection, DisconnectOptions, InMessage, Pack
 use tsclientlib::MessageTarget as TsMessageTarget;
 use tsclientlib::data::{Client as TsClient, Channel as TsChannel};
 use tsclientlib::events::{Event as TsEvent, PropertyId};
-use tsproto_types::{ChannelType as TsChannelType, ClientType as TsClientType, Codec as TsCodec};
+use tsproto_types::{ChannelType as TsChannelType, ClientType as TsClientType, Codec as TsCodec, GroupType as TsGroupType};
 use tsproto_types::errors::Error as TsError;
 use tsproto_packets::packets::{AudioData, CodecType, Direction, Flags, OutAudio, OutCommand, PacketType};
 
@@ -1547,6 +1547,10 @@ impl Client {
     /// The list is requested on connect (`servergrouplist`); until the server
     /// answers it is empty. Names are what the whisper list shows - the client
     /// list only carries group ids.
+    ///
+    /// Only regular groups: the server also lists its templates for new virtual
+    /// servers and the server-query groups, which no connected client can hold
+    /// and whose names repeat the regular ones.
     pub fn list_server_groups(&self) -> Vec<(u64, String)> {
         let Some(con) = self.connection.as_ref() else {
             return Vec::new();
@@ -1557,6 +1561,7 @@ impl Client {
         let mut groups: Vec<(u64, String)> = state
             .server_groups
             .iter()
+            .filter(|(_, group)| group.group_type == TsGroupType::Regular)
             .map(|(id, group)| (id.0, group.name.clone()))
             .collect();
         groups.sort_by_key(|(id, _)| *id);
