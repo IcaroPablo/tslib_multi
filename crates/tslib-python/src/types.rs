@@ -298,6 +298,13 @@ pub fn event_to_dict<'py>(py: Python<'py>, event: &tslib_core::events::Event) ->
             };
             let _ = dict.set_item("target", target_str);
         }
+        Event::PluginCommand { name, data, invoker_id, invoker_uid } => {
+            let _ = dict.set_item("type", "plugin_command");
+            let _ = dict.set_item("name", name.as_str());
+            let _ = dict.set_item("data", data.as_str());
+            let _ = dict.set_item("invoker_id", invoker_id);
+            let _ = dict.set_item("invoker_uid", invoker_uid.as_deref());
+        }
         Event::Poked { poker_id, poker_name, message } => {
             let _ = dict.set_item("type", "poked");
             let _ = dict.set_item("poker_id", poker_id);

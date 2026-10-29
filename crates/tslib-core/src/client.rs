@@ -1055,6 +1055,22 @@ impl Client {
                 }
                 None
             }
+            InMessage::PluginCommand(ref cmd) => {
+                // One event per part: a server may batch several commands into one message
+                for part in cmd.iter() {
+                    let Some(invoker) = part.invoker_id else { continue };
+                    let invoker_uid = part.invoker_uid.as_ref().map(|u| {
+                        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &u.0)
+                    });
+                    let _ = self.event_tx.send(Event::PluginCommand {
+                        name: part.name.clone(),
+                        data: part.data.clone(),
+                        invoker_id: invoker.0,
+                        invoker_uid,
+                    });
+                }
+                None
+            }
             InMessage::CommandError(ref err) => {
                 for part in err.iter() {
                     log::info!("CommandError: id={:?}, msg={}", part.id, part.message);
@@ -1394,6 +1410,34 @@ impl Client {
             .send(con)
             .map_err(|e| Error::Internal(e.to_string()))?;
 
+        Ok(())
+    }
+
+    /// Send a plugin command: to everyone on the server, or to one client when [target] is given.
+    /// Clients that do not know [name] ignore it.
+    pub fn send_plugin_command(
+        &mut self,
+        name: &str,
+        data: &str,
+        target: Option<u16>,
+    ) -> Result<()> {
+        let con = self
+            .connection
+            .as_mut()
+            .ok_or(ConnectionError::NotConnected)?;
+        let part = tsclientlib::messages::c2s::OutPluginCommandRequestPart {
+            name: name.into(),
+            data: data.into(),
+            target: if target.is_some() {
+                tsproto_types::PluginTargetMode::Client
+            } else {
+                tsproto_types::PluginTargetMode::Server
+            },
+            target_client_id: target.map(ClientId),
+        };
+        tsclientlib::messages::c2s::OutPluginCommandRequestMessage::new(&mut std::iter::once(part))
+            .send(con)
+            .map_err(|e| Error::Internal(e.to_string()))?;
         Ok(())
     }
 

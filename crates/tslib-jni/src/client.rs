@@ -542,6 +542,29 @@ pub extern "system" fn Java_dev_tslib_Client_nativeSendChannelMessage(
     to_jni_result(&mut env, handle.client.send_channel_message(msg));
 }
 
+/// `Client.sendPluginCommand(name, data, targetId)`; a negative target sends to the whole server
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_tslib_Client_nativeSendPluginCommand(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+    name: JString,
+    data: JString,
+    target_id: jint,
+) {
+    let name = match require_string(&mut env, &name) {
+        Ok(s) => s,
+        Err(()) => return,
+    };
+    let data = match require_string(&mut env, &data) {
+        Ok(s) => s,
+        Err(()) => return,
+    };
+    let target = (target_id >= 0).then_some(target_id as u16);
+    let handle = ptr_to_handle(ptr);
+    to_jni_result(&mut env, handle.client.send_plugin_command(&name, &data, target));
+}
+
 /// `Client.sendPrivateMessage(userId, msg)`
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_tslib_Client_nativeSendPrivateMessage(

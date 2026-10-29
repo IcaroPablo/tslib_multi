@@ -83,6 +83,15 @@ pub enum Event {
         message: String,
         target: MessageTarget,
     },
+    /// Hidden data from another client, passed on by the server: clients of the same kind use
+    /// it to talk to each other (TeleSpeak syncs chat history this way). Others ignore it.
+    PluginCommand {
+        name: String,
+        data: String,
+        invoker_id: u16,
+        /// The sender's unique id, base64 like a user's
+        invoker_uid: Option<String>,
+    },
     /// We were poked by someone
     Poked {
         poker_id: u16,

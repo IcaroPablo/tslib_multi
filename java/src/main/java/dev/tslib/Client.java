@@ -192,6 +192,19 @@ public class Client implements AutoCloseable {
     }
 
     /**
+     * Send a plugin command: hidden data for clients that know {@code name}; others ignore it.
+     *
+     * @param name what the data is, so a receiver can tell its own commands apart
+     * @param data the payload
+     * @param targetId the client to send it to, or -1 for everyone on the server
+     * @throws TsLibException on error
+     */
+    public void sendPluginCommand(String name, String data, int targetId) {
+        checkNotClosed();
+        nativeSendPluginCommand(nativePtr, name, data, targetId);
+    }
+
+    /**
      * Send a private message to a user.
      *
      * @param userId target user ID
@@ -352,6 +365,7 @@ public class Client implements AutoCloseable {
     private static native ServerInfo nativeGetServerInfo(long ptr);
     private static native void nativeSendServerMessage(long ptr, String msg);
     private static native void nativeSendChannelMessage(long ptr, String msg);
+    private static native void nativeSendPluginCommand(long ptr, String name, String data, int targetId);
     private static native void nativeSendPrivateMessage(long ptr, int userId, String msg);
     private static native void nativeMoveToChannel(long ptr, long channelId);
     private static native void nativeSyncState(long ptr);

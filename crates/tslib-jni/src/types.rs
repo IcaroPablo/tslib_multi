@@ -332,6 +332,15 @@ pub fn create_java_event<'a>(
             put_string(env, &map, "target", target_str);
             "text_message"
         }
+        Event::PluginCommand { name, data, invoker_id, invoker_uid } => {
+            put_string(env, &map, "name", name);
+            put_string(env, &map, "data", data);
+            put_int(env, &map, "invoker_id", *invoker_id as i32);
+            if let Some(uid) = invoker_uid {
+                put_string(env, &map, "invoker_uid", uid);
+            }
+            "plugin_command"
+        }
         Event::Poked { poker_id, poker_name, message } => {
             put_int(env, &map, "poker_id", *poker_id as i32);
             put_string(env, &map, "poker_name", poker_name);
