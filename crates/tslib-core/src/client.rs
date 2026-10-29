@@ -626,7 +626,10 @@ impl Client {
             }
             StreamItem::MessageEvent(msg) => {
                 log::info!("StreamItem::MessageEvent: cmd={:?}", msg.get_command_name());
-                self.process_message_event(msg).into_iter().collect()
+                match msg {
+                    InMessage::PluginCommand(ref cmd) => plugin_command_events(cmd),
+                    msg => self.process_message_event(msg).into_iter().collect(),
+                }
             }
             StreamItem::FileDownload(handle, mut result) => {
                 let (channel_id, path) = self
@@ -1052,22 +1055,6 @@ impl Client {
                             );
                         }
                     }
-                }
-                None
-            }
-            InMessage::PluginCommand(ref cmd) => {
-                // One event per part: a server may batch several commands into one message
-                for part in cmd.iter() {
-                    let Some(invoker) = part.invoker_id else { continue };
-                    let invoker_uid = part.invoker_uid.as_ref().map(|u| {
-                        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &u.0)
-                    });
-                    let _ = self.event_tx.send(Event::PluginCommand {
-                        name: part.name.clone(),
-                        data: part.data.clone(),
-                        invoker_id: invoker.0,
-                        invoker_uid,
-                    });
                 }
                 None
             }
@@ -2193,6 +2180,24 @@ fn plan_audio_routes(
         });
     }
     routes
+}
+
+/// One event per plugin command: a server may batch several into one message.
+fn plugin_command_events(cmd: &tsclientlib::messages::s2c::InPluginCommand) -> Vec<Event> {
+    cmd.iter()
+        .filter_map(|part| {
+            let invoker = part.invoker_id?;
+            let invoker_uid = part.invoker_uid.as_ref().map(|u| {
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &u.0)
+            });
+            Some(Event::PluginCommand {
+                name: part.name.clone(),
+                data: part.data.clone(),
+                invoker_id: invoker.0,
+                invoker_uid,
+            })
+        })
+        .collect()
 }
 
 /// Convert tsclientlib Client to our User type
