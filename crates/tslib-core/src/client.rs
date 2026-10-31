@@ -1096,7 +1096,9 @@ impl Client {
                     if is_error {
                         if let Some((channel_id, _)) = self.pending_perm_overview.take() {
                             log::info!("permoverview failed for channel {}, defaulting to browse/download only", channel_id);
-                            let hints = HINT_JOIN | HINT_FILE_BROWSE | HINT_FILE_DOWNLOAD;
+                            // Marked unknown, so the app can leave the server to decide rather than hide what
+                            // this account may well be allowed to do
+                            let hints = HINT_JOIN | HINT_FILE_BROWSE | HINT_FILE_DOWNLOAD | HINT_RIGHTS_UNKNOWN;
                             if let Some(ch) = self.server_state.channels.get_mut(&channel_id) {
                                 ch.permission_hints = hints;
                             }
@@ -2440,6 +2442,8 @@ const HINT_FILE_DELETE: u64 = 256;
 const HINT_FILE_RENAME: u64 = 512;
 const HINT_FILE_BROWSE: u64 = 1024;
 const HINT_FILE_DIRECTORY_CREATE: u64 = 2048;
+/// The server would not tell this account its rights (permoverview refused): the other bits are a guess
+const HINT_RIGHTS_UNKNOWN: u64 = 4096;
 
 /// Compute ChannelPermissionHint bitflags from a permoverview result.
 /// For each file operation, the user can do it if their power >= the needed power.

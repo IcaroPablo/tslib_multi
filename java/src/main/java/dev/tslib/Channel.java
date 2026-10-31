@@ -29,6 +29,8 @@ public class Channel {
     public static final long PERM_FILE_RENAME = 512;
     public static final long PERM_FILE_BROWSE = 1024;
     public static final long PERM_FILE_DIRECTORY_CREATE = 2048;
+    /** The server would not tell this account its rights: the other bits are a guess */
+    public static final long PERM_RIGHTS_UNKNOWN = 4096;
 
     public Channel(long id, long parentId, String name, String topic,
                    String description, int order, boolean isPermanent,
