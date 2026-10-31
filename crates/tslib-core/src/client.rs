@@ -1114,10 +1114,13 @@ impl Client {
                 for part in err.iter() {
                     let error_id = part.id as u32;
                     if error_id != 0 {
-                        let event = Event::CommandError {
-                            error_id,
-                            message: part.message.clone(),
+                        // The permission it lacked, by id: ids differ between server versions, but
+                        // the id tells which right a refusal was about
+                        let message = match &part.missing_permission_id {
+                            Some(permission) => format!("{} (permission {})", part.message, permission.0),
+                            None => part.message.clone(),
                         };
+                        let event = Event::CommandError { error_id, message };
                         let _ = self.event_tx.send(event.clone());
                         first.get_or_insert(event);
                     }
