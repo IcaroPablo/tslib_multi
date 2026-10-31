@@ -1106,7 +1106,9 @@ impl Client {
                         }
                     }
                 }
-                // Emit CommandError event for non-trivial errors (skip id=0 "ok")
+                // Emit CommandError event for non-trivial errors (skip id=0 "ok"). Returned as well:
+                // only what this returns reaches the app, so a refused command was never reported
+                let mut first = None;
                 for part in err.iter() {
                     let error_id = part.id as u32;
                     if error_id != 0 {
@@ -1114,10 +1116,11 @@ impl Client {
                             error_id,
                             message: part.message.clone(),
                         };
-                        let _ = self.event_tx.send(event);
+                        let _ = self.event_tx.send(event.clone());
+                        first.get_or_insert(event);
                     }
                 }
-                None
+                first
             }
             _ => {
                 log::debug!("Unhandled MessageEvent: {:?}", msg.get_command_name());
