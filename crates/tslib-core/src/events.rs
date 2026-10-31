@@ -92,6 +92,25 @@ pub enum Event {
         /// The sender's unique id, base64 like a user's
         invoker_uid: Option<String>,
     },
+    /// A message waiting in our offline mailbox on the server, as the mailbox lists it: without
+    /// its text, which [Client::get_offline_message] fetches
+    OfflineMessageListed {
+        message_id: u32,
+        /// The sender's unique id, base64 like a user's
+        sender_uid: String,
+        subject: String,
+        /// When it was left, in seconds since the epoch
+        timestamp: i64,
+        read: bool,
+    },
+    /// An offline message's text, fetched from the mailbox
+    OfflineMessage {
+        message_id: u32,
+        sender_uid: String,
+        subject: String,
+        message: String,
+        timestamp: i64,
+    },
     /// We were poked by someone
     Poked {
         poker_id: u16,

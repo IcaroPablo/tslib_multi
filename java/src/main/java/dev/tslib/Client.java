@@ -205,6 +205,50 @@ public class Client implements AutoCloseable {
     }
 
     /**
+     * Leave a message in a user's offline mailbox on the server, kept until they read it.
+     * Needs the right to send offline messages; a refusal arrives as a command error.
+     *
+     * @param uid the recipient's unique id, base64
+     * @param subject the subject the mailbox lists it under
+     * @param message the text
+     * @throws TsLibException on error
+     */
+    public void sendOfflineMessage(String uid, String subject, String message) {
+        checkNotClosed();
+        nativeSendOfflineMessage(nativePtr, uid, subject, message);
+    }
+
+    /**
+     * Ask for our offline mailbox's list: an {@code offline_message_listed} event per message.
+     *
+     * @throws TsLibException on error
+     */
+    public void requestOfflineMessages() {
+        checkNotClosed();
+        nativeRequestOfflineMessages(nativePtr);
+    }
+
+    /**
+     * Fetch one offline message's text: an {@code offline_message} event.
+     *
+     * @throws TsLibException on error
+     */
+    public void getOfflineMessage(long messageId) {
+        checkNotClosed();
+        nativeGetOfflineMessage(nativePtr, messageId);
+    }
+
+    /**
+     * Mark an offline message read.
+     *
+     * @throws TsLibException on error
+     */
+    public void markOfflineMessageRead(long messageId) {
+        checkNotClosed();
+        nativeMarkOfflineMessageRead(nativePtr, messageId);
+    }
+
+    /**
      * Send a private message to a user.
      *
      * @param userId target user ID
@@ -366,6 +410,10 @@ public class Client implements AutoCloseable {
     private static native void nativeSendServerMessage(long ptr, String msg);
     private static native void nativeSendChannelMessage(long ptr, String msg);
     private static native void nativeSendPluginCommand(long ptr, String name, String data, int targetId);
+    private static native void nativeSendOfflineMessage(long ptr, String uid, String subject, String message);
+    private static native void nativeRequestOfflineMessages(long ptr);
+    private static native void nativeGetOfflineMessage(long ptr, long messageId);
+    private static native void nativeMarkOfflineMessageRead(long ptr, long messageId);
     private static native void nativeSendPrivateMessage(long ptr, int userId, String msg);
     private static native void nativeMoveToChannel(long ptr, long channelId);
     private static native void nativeSyncState(long ptr);

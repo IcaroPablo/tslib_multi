@@ -117,6 +117,9 @@ pub struct Client {
     /// Pending permoverview request: accumulates permission entries
     /// (channel_id, HashMap<permission_id, max_value>)
     pending_perm_overview: Option<(u64, HashMap<u32, i32>)>,
+    /// The offline mailbox's list was asked for: an empty mailbox answers with an error
+    /// ("database empty result set") instead of a list, which is no error to report
+    pending_offline_list: bool,
     /// Active whisper targets. When non-empty, `send_audio` routes voice as
     /// `C2SWhisper` to these targets instead of the current channel (TS3
     /// semantics: whispering and channel talk are mutually exclusive).
@@ -168,6 +171,7 @@ impl Client {
             self_away: None,
             pending_file_list: None,
             pending_perm_overview: None,
+            pending_offline_list: false,
             whisper_clients: Vec::new(),
             whisper_channels: Vec::new(),
             whisper_groups: Vec::new(),
@@ -628,6 +632,11 @@ impl Client {
                 log::info!("StreamItem::MessageEvent: cmd={:?}", msg.get_command_name());
                 match msg {
                     InMessage::PluginCommand(ref cmd) => plugin_command_events(cmd),
+                    InMessage::OfflineMessageList(ref list) => {
+                        self.pending_offline_list = false;
+                        offline_list_events(list)
+                    }
+                    InMessage::OfflineMessage(ref message) => offline_message_events(message),
                     msg => self.process_message_event(msg).into_iter().collect(),
                 }
             }
@@ -1062,6 +1071,11 @@ impl Client {
                 for part in err.iter() {
                     log::info!("CommandError: id={:?}, msg={}", part.id, part.message);
                 }
+                // An empty offline mailbox answers its list request this way
+                if self.pending_offline_list && err.iter().any(|part| part.id == TsError::DatabaseEmptyResult) {
+                    self.pending_offline_list = false;
+                    return None;
+                }
                 // Handle "database empty result" (1281) — server sends this when a
                 // directory has no files instead of FileListFinished.
                 if self.pending_file_list.is_some() {
@@ -1423,6 +1437,66 @@ impl Client {
             target_client_id: target.map(ClientId),
         };
         tsclientlib::messages::c2s::OutPluginCommandRequestMessage::new(&mut std::iter::once(part))
+            .send(con)
+            .map_err(|e| Error::Internal(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Leave a message in the offline mailbox of [uid] (base64): the server keeps it until they
+    /// read it, whether or not they are connected. Needs the right to send offline messages; a
+    /// refusal arrives as a command error.
+    pub fn send_offline_message(&mut self, uid: &str, subject: &str, message: &str) -> Result<()> {
+        let uid = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, uid)
+            .map_err(|e| Error::Internal(format!("invalid uid: {e}")))?;
+        let con = self
+            .connection
+            .as_mut()
+            .ok_or(ConnectionError::NotConnected)?;
+        let part = tsclientlib::messages::c2s::OutOfflineMessageAddPart {
+            client_uid: std::borrow::Cow::Borrowed(tsproto_types::Uid::from_bytes(&uid)),
+            subject: subject.into(),
+            message: message.into(),
+        };
+        tsclientlib::messages::c2s::OutOfflineMessageAddMessage::new(&mut std::iter::once(part))
+            .send(con)
+            .map_err(|e| Error::Internal(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Ask for the list of our offline mailbox: one [Event::OfflineMessageListed] per message
+    pub fn request_offline_messages(&mut self) -> Result<()> {
+        let con = self
+            .connection
+            .as_mut()
+            .ok_or(ConnectionError::NotConnected)?;
+        self.pending_offline_list = true;
+        tsclientlib::messages::c2s::OutOfflineMessageListRequestMessage::new()
+            .send(con)
+            .map_err(|e| Error::Internal(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Fetch one offline message's text: an [Event::OfflineMessage]
+    pub fn get_offline_message(&mut self, message_id: u32) -> Result<()> {
+        let con = self
+            .connection
+            .as_mut()
+            .ok_or(ConnectionError::NotConnected)?;
+        let part = tsclientlib::messages::c2s::OutOfflineMessageGetPart { message_id };
+        tsclientlib::messages::c2s::OutOfflineMessageGetMessage::new(&mut std::iter::once(part))
+            .send(con)
+            .map_err(|e| Error::Internal(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Mark an offline message read, so the next list shows it as such
+    pub fn mark_offline_message_read(&mut self, message_id: u32) -> Result<()> {
+        let con = self
+            .connection
+            .as_mut()
+            .ok_or(ConnectionError::NotConnected)?;
+        let part = tsclientlib::messages::c2s::OutOfflineMessageUpdateFlagPart { message_id, is_read: true };
+        tsclientlib::messages::c2s::OutOfflineMessageUpdateFlagMessage::new(&mut std::iter::once(part))
             .send(con)
             .map_err(|e| Error::Internal(e.to_string()))?;
         Ok(())
@@ -2196,6 +2270,37 @@ fn plugin_command_events(cmd: &tsclientlib::messages::s2c::InPluginCommand) -> V
                 invoker_id: invoker.0,
                 invoker_uid,
             })
+        })
+        .collect()
+}
+
+fn uid_base64(uid: &tsproto_types::UidBuf) -> String {
+    base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &uid.0)
+}
+
+/// One event per message the offline mailbox lists.
+fn offline_list_events(list: &tsclientlib::messages::s2c::InOfflineMessageList) -> Vec<Event> {
+    list.iter()
+        .map(|part| Event::OfflineMessageListed {
+            message_id: part.message_id,
+            sender_uid: uid_base64(&part.client_uid),
+            subject: part.subject.clone(),
+            timestamp: part.timestamp.unix_timestamp(),
+            read: part.is_read,
+        })
+        .collect()
+}
+
+/// The offline message fetched from the mailbox.
+fn offline_message_events(message: &tsclientlib::messages::s2c::InOfflineMessage) -> Vec<Event> {
+    message
+        .iter()
+        .map(|part| Event::OfflineMessage {
+            message_id: part.message_id,
+            sender_uid: uid_base64(&part.client_uid),
+            subject: part.subject.clone(),
+            message: part.message.clone(),
+            timestamp: part.timestamp.unix_timestamp(),
         })
         .collect()
 }

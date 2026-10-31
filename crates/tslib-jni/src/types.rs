@@ -341,6 +341,22 @@ pub fn create_java_event<'a>(
             }
             "plugin_command"
         }
+        Event::OfflineMessageListed { message_id, sender_uid, subject, timestamp, read } => {
+            put_long(env, &map, "message_id", *message_id as i64);
+            put_string(env, &map, "sender_uid", sender_uid);
+            put_string(env, &map, "subject", subject);
+            put_long(env, &map, "timestamp", *timestamp);
+            put_boolean(env, &map, "read", *read);
+            "offline_message_listed"
+        }
+        Event::OfflineMessage { message_id, sender_uid, subject, message, timestamp } => {
+            put_long(env, &map, "message_id", *message_id as i64);
+            put_string(env, &map, "sender_uid", sender_uid);
+            put_string(env, &map, "subject", subject);
+            put_string(env, &map, "message", message);
+            put_long(env, &map, "timestamp", *timestamp);
+            "offline_message"
+        }
         Event::Poked { poker_id, poker_name, message } => {
             put_int(env, &map, "poker_id", *poker_id as i32);
             put_string(env, &map, "poker_name", poker_name);

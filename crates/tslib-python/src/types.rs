@@ -305,6 +305,22 @@ pub fn event_to_dict<'py>(py: Python<'py>, event: &tslib_core::events::Event) ->
             let _ = dict.set_item("invoker_id", invoker_id);
             let _ = dict.set_item("invoker_uid", invoker_uid.as_deref());
         }
+        Event::OfflineMessageListed { message_id, sender_uid, subject, timestamp, read } => {
+            let _ = dict.set_item("type", "offline_message_listed");
+            let _ = dict.set_item("message_id", message_id);
+            let _ = dict.set_item("sender_uid", sender_uid.as_str());
+            let _ = dict.set_item("subject", subject.as_str());
+            let _ = dict.set_item("timestamp", timestamp);
+            let _ = dict.set_item("read", read);
+        }
+        Event::OfflineMessage { message_id, sender_uid, subject, message, timestamp } => {
+            let _ = dict.set_item("type", "offline_message");
+            let _ = dict.set_item("message_id", message_id);
+            let _ = dict.set_item("sender_uid", sender_uid.as_str());
+            let _ = dict.set_item("subject", subject.as_str());
+            let _ = dict.set_item("message", message.as_str());
+            let _ = dict.set_item("timestamp", timestamp);
+        }
         Event::Poked { poker_id, poker_name, message } => {
             let _ = dict.set_item("type", "poked");
             let _ = dict.set_item("poker_id", poker_id);

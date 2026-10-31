@@ -565,6 +565,58 @@ pub extern "system" fn Java_dev_tslib_Client_nativeSendPluginCommand(
     to_jni_result(&mut env, handle.client.send_plugin_command(&name, &data, target));
 }
 
+/// `Client.sendOfflineMessage(uid, subject, message)`
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_tslib_Client_nativeSendOfflineMessage(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+    uid: JString,
+    subject: JString,
+    message: JString,
+) {
+    let Ok(uid) = require_string(&mut env, &uid) else { return };
+    let Ok(subject) = require_string(&mut env, &subject) else { return };
+    let Ok(message) = require_string(&mut env, &message) else { return };
+    let handle = ptr_to_handle(ptr);
+    to_jni_result(&mut env, handle.client.send_offline_message(&uid, &subject, &message));
+}
+
+/// `Client.requestOfflineMessages()`
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_tslib_Client_nativeRequestOfflineMessages(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+) {
+    let handle = ptr_to_handle(ptr);
+    to_jni_result(&mut env, handle.client.request_offline_messages());
+}
+
+/// `Client.getOfflineMessage(messageId)`
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_tslib_Client_nativeGetOfflineMessage(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+    message_id: jlong,
+) {
+    let handle = ptr_to_handle(ptr);
+    to_jni_result(&mut env, handle.client.get_offline_message(message_id as u32));
+}
+
+/// `Client.markOfflineMessageRead(messageId)`
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_dev_tslib_Client_nativeMarkOfflineMessageRead(
+    mut env: JNIEnv,
+    _class: JClass,
+    ptr: jlong,
+    message_id: jlong,
+) {
+    let handle = ptr_to_handle(ptr);
+    to_jni_result(&mut env, handle.client.mark_offline_message_read(message_id as u32));
+}
+
 /// `Client.sendPrivateMessage(userId, msg)`
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_dev_tslib_Client_nativeSendPrivateMessage(
