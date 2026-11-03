@@ -108,6 +108,38 @@ pub(crate) fn parse(raw: &str) -> Vec<StreamCommand> {
     result
 }
 
+/// A `notifyfilelist`, read from its raw text: channel, folder and entries. The parsed message is
+/// lost on a TeamSpeak 6 server, which sends the times in milliseconds where the parser expects
+/// seconds and gives up on the whole list, so every folder looked empty.
+pub(crate) fn file_list(raw: &str) -> Option<(u64, String, Vec<crate::client::FileEntry>)> {
+    let (name, parser) = CommandParser::new(raw.as_bytes());
+    if name != b"notifyfilelist" {
+        return None;
+    }
+    let parts = parts(parser);
+    let first = parts.first()?;
+    let channel_id = first.get("cid")?.parse::<u64>().ok()?;
+    let path = first.get("path")?.to_string();
+    let entries = parts
+        .iter()
+        .filter_map(|part| {
+            let datetime = part.get("datetime").and_then(|v| v.parse::<i64>().ok()).unwrap_or(0);
+            Some(crate::client::FileEntry {
+                name: part.get("name")?.to_string(),
+                size: part.get("size").and_then(|v| v.parse().ok()).unwrap_or(0),
+                // Seconds from a TeamSpeak 3 server, milliseconds from a TeamSpeak 6 one
+                datetime: if datetime > MILLISECONDS_FROM { datetime / 1000 } else { datetime },
+                // 0 is a folder, 1 a file
+                is_file: part.get("type").map(|v| v.as_ref()) != Some("0"),
+            })
+        })
+        .collect();
+    Some((channel_id, path, entries))
+}
+
+/// A time this large in seconds would be thousands of years away: it is in milliseconds
+const MILLISECONDS_FROM: i64 = 100_000_000_000;
+
 /// The arguments of each part of a command (parts are separated by `|`).
 fn parts(parser: CommandParser<'_>) -> Vec<HashMap<String, Cow<'_, str>>> {
     let mut parts = vec![HashMap::new()];
@@ -128,6 +160,20 @@ fn parts(parser: CommandParser<'_>) -> Vec<HashMap<String, Cow<'_, str>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_list_in_milliseconds_and_seconds() {
+        let raw = "notifyfilelist cid=1 path=\\/ name=photo\\s(4).jpeg size=27399 datetime=1793470996168 type=1|\
+                   name=old.txt size=5 datetime=1700000000 type=1|name=Folder size=0 datetime=1700000000 type=0";
+        let (channel, path, entries) = file_list(raw).unwrap();
+        assert_eq!((channel, path.as_str()), (1, "/"));
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].name, "photo (4).jpeg");
+        assert_eq!(entries[0].datetime, 1793470996);
+        assert_eq!(entries[1].datetime, 1700000000);
+        assert!(entries[1].is_file && !entries[2].is_file);
+        assert!(file_list("notifyfilelistfinished cid=1 path=\\/").is_none());
+    }
 
     #[test]
     fn stream_started() {

@@ -982,22 +982,9 @@ impl Client {
     fn process_message_event(&mut self, msg: InMessage) -> Option<Event> {
         log::info!("process_message_event: cmd={}", msg.get_command_name());
         match msg {
-            InMessage::FileList(file_list) => {
-                let count = file_list.iter().count();
-                log::info!("Received FileList with {} entries", count);
-                if let Some((_, _, ref mut entries)) = self.pending_file_list {
-                    for part in file_list.iter() {
-                        log::info!("  file entry: name={}, size={}, is_file={}", part.name, part.size, part.is_file);
-                        entries.push(FileEntry {
-                            name: part.name.clone(),
-                            size: part.size,
-                            datetime: part.date_time.unix_timestamp(),
-                            is_file: part.is_file,
-                        });
-                    }
-                } else {
-                    log::warn!("Received FileList but no pending_file_list!");
-                }
+            InMessage::FileList(_) => {
+                // Taken from the raw text instead, which a TeamSpeak 6 server's list also passes
+                // (see streams::file_list): adding these too would list each file twice
                 None
             }
             InMessage::FileListFinished(_finished) => {
@@ -1878,6 +1865,15 @@ impl Client {
 
     /// Handle the stream commands in a raw command from the server
     fn process_raw_command(&mut self, raw: &str) -> Vec<Event> {
+        // A folder's files come from the raw text (see streams::file_list), not the parsed message
+        if let Some((channel_id, path, files)) = streams::file_list(raw) {
+            if let Some((pending_channel, ref pending_path, ref mut entries)) = self.pending_file_list {
+                if pending_channel == channel_id && *pending_path == path {
+                    entries.extend(files);
+                }
+            }
+            return Vec::new();
+        }
         let mut events = Vec::new();
         for command in streams::parse(raw) {
             match command {
